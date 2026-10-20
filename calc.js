@@ -1,0 +1,270 @@
+'use strict';
+/* Planes de abonado · FG Agro — cálculos (sin DOM, se puede probar fuera del navegador).
+   Replica las pestañas 1. ANALITICAS, 2. CALCULADORA DE NITRÓGENO y 3. RIEGO del Excel
+   Gestion Fertirrigacion v5, rellenando solos fA, fB y la mineralización de la materia orgánica.
+   No lleva datos de clientes: solo tablas de bibliografía que se pueden cambiar en Ajustes. */
+(function (root) {
+  const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const GRUPOS = ['CITRICOS', 'FRUTALES', 'ALMENDRO', 'OLIVOS'];
+  const TEXTURAS = ['Muy arenoso', 'Arenoso', 'Franco', 'Arcilloso'];
+  // Tipos de cultivo de los planes (se irán añadiendo más). grupo = columna del Kc y de las tablas.
+  const CULTIVOS = [
+    { nombre: 'Limonero Fino', grupo: 'CITRICOS', extraccion: 'Limonero' }, { nombre: 'Limonero Verna', grupo: 'CITRICOS', extraccion: 'Limonero' },
+    { nombre: 'Pomelo', grupo: 'CITRICOS', extraccion: 'Naranjo' }, { nombre: 'Naranjo temprano', grupo: 'CITRICOS', extraccion: 'Naranjo' },
+    { nombre: 'Naranjo media estación', grupo: 'CITRICOS', extraccion: 'Naranjo' }, { nombre: 'Naranjo tardío', grupo: 'CITRICOS', extraccion: 'Naranjo' },
+    { nombre: 'Mandarino', grupo: 'CITRICOS', extraccion: 'Mandarino' }, { nombre: 'Albaricoque temprano', grupo: 'FRUTALES', extraccion: 'Albaricoque' },
+    { nombre: 'Albaricoque media estación', grupo: 'FRUTALES', extraccion: 'Albaricoque' }, { nombre: 'Melocotón', grupo: 'FRUTALES', extraccion: 'Melocotonero' },
+    { nombre: 'Nectarina', grupo: 'FRUTALES', extraccion: 'Melocotonero' }, { nombre: 'Olivo', grupo: 'OLIVOS', extraccion: 'Olivar' },
+    { nombre: 'Almendro', grupo: 'ALMENDRO', extraccion: 'Almendro (en cáscara)' }
+  ];
+
+  /* Tablas por defecto (pestaña 1 del Excel y Bibliografía). Rangos como [mín, máx]: se usa el valor medio. */
+  const TABLAS = {
+    fA: [ // Tabla 1. Factor de agotamiento de nitratos (%) según NO3 del suelo (mg/kg)
+      { hasta: 40, r: [10, 15] },
+      { hasta: Infinity, r: [15, 20] }
+    ],
+    fACartagena: 40, // NO3 > 100 mg/kg en el Campo de Cartagena
+    fB: { // Tabla 2. Minoración por suelo humectado
+      lenosos: { menos5: { 1: [0.2, 0.25], 2: [0.4, 0.5] }, mas5: { 1: [0.12, 0.17], 2: [0.24, 0.34] } },
+      resto: 1
+    },
+    mo: { // Tabla 3. N anual del humus (kg N/ha) según MO (%) y textura
+      puntos: [0.5, 1, 1.5, 2, 2.5, 3],
+      Arenoso: [[10, 15], [20, 30], [30, 45], [45, 60], [55, 80], [75, 90]],
+      Franco: [[7, 12], [15, 25], [22, 37], [30, 50], [37, 62], [60, 70]],
+      Arcilloso: [[5, 10], [10, 20], [15, 30], [20, 40], [25, 50], [30, 60]]
+    },
+    estiercol: [ // Tabla 4. Riqueza de N (% s.m.s.) y % de N orgánico mineralizado años 1-3
+      { tipo: 'Estiércol bovino', n: [1, 2], min: [50, 30, 20] },
+      { tipo: 'Estiércol de oveja y cabra', n: [2, 2.5], min: [45, 25, 30] },
+      { tipo: 'Estiércol porcino', n: [1.5, 2], min: [65, 20, 15] },
+      { tipo: 'Purines de porcino', n: [0.4, 0.4], min: [75, 15, 10], humedo: true },
+      { tipo: 'Gallinaza', n: [2, 5], min: [70, 15, 15] },
+      { tipo: 'Estiércol conejo', n: [1.5, 2], min: [60, 30, 10] },
+      { tipo: 'Lodos depuradora', n: [2, 7], min: [35, 35, 30] },
+      { tipo: 'Compost sólidos urbanos', n: [1, 1.8], min: [40, 30, 30] }
+    ],
+    msDefecto: 60, // % de materia seca si no hay dato
+    extraccion: [ // Tabla 5. Coeficiente de extracción (kg N/t)
+      { cultivo: 'Albaricoque', r: [3.5, 5] }, { cultivo: 'Ciruelo', r: [3.5, 5] }, { cultivo: 'Melocotonero', r: [3, 4.5] },
+      { cultivo: 'Frutal de pepita', r: [3, 4] }, { cultivo: 'Almendro (en cáscara)', r: [35, 45] }, { cultivo: 'Limonero', r: [4.8, 6] },
+      { cultivo: 'Naranjo', r: [4.8, 7] }, { cultivo: 'Mandarino', r: [4.8, 7.5] }, { cultivo: 'Vid vinificación', r: [7, 8.5] },
+      { cultivo: 'Vid mesa', r: [2, 3.5] }, { cultivo: 'Olivar', r: [11, 20] }
+    ],
+    eficiencia: { 'Muy arenoso': 0.87, Arenoso: 0.9, Franco: 0.95, Arcilloso: 1 },
+    uniformidad: 0.9,
+    limiteNOrganico: 170,
+    antiguedad: { suelo: 4, agua: 2, estiercol: 1 } // años; se pueden cambiar en Ajustes
+  };
+  // ETo media mensual (mm) de la zona de Mula, la misma en los 76 Excels
+  const ETO_MULA = [54.17, 84.05, 120.22, 155.54, 181.53, 217.63, 225.65, 188.81, 146.89, 95.8, 72.87, 62.72];
+  const KC = {
+    CITRICOS: [0.66, 0.65, 0.66, 0.62, 0.55, 0.62, 0.68, 0.79, 0.74, 0.84, 0.73, 0.63],
+    FRUTALES: [0.2, 0.25, 0.3, 0.6, 0.75, 0.9, 0.9, 0.75, 0.7, 0.55, 0.45, 0.45],
+    ALMENDRO: [0.2, 0.25, 0.4, 0.6, 0.75, 0.9, 0.9, 0.75, 0.65, 0.5, 0.4, 0.3],
+    OLIVOS: [0.5, 0.5, 0.65, 0.6, 0.55, 0.5, 0.45, 0.45, 0.55, 0.6, 0.65, 0.5]
+  };
+  const DIAS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  const num = (v) => { if (v === null || v === undefined || v === '') return null; const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+  const n0 = (v) => num(v) ?? 0;
+  const medio = (r) => (Array.isArray(r) ? (r[0] + r[1]) / 2 : r);
+  const r2 = (v, d = 2) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
+  const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+  function texturaTabla(t) {
+    const k = norm(t);
+    if (k.startsWith('arcill')) return 'Arcilloso';
+    if (k.startsWith('arenos') || k.startsWith('muy aren')) return 'Arenoso';
+    return 'Franco';
+  }
+  function texturaRiego(t) {
+    const k = norm(t);
+    if (k.startsWith('muy')) return 'Muy arenoso';
+    if (k.startsWith('arenos')) return 'Arenoso';
+    if (k.startsWith('arcill')) return 'Arcilloso';
+    return 'Franco';
+  }
+
+  /* ---------- Factores automáticos ---------- */
+  function fA(no3, cartagena, T = TABLAS) {
+    no3 = num(no3);
+    if (no3 == null) return null;
+    if (cartagena && no3 > 100) return { valor: T.fACartagena, rango: null, txt: 'NO3 > 100 mg/kg en el Campo de Cartagena' };
+    const fila = T.fA.find((f) => no3 <= f.hasta) || T.fA[T.fA.length - 1];
+    return { valor: medio(fila.r), rango: fila.r, txt: (no3 <= 40 ? 'NO3 0-40 mg/kg' : 'NO3 > 40 mg/kg') };
+  }
+  function fB(plan, T = TABLAS) {
+    if (!GRUPOS.includes(plan.grupo)) return { valor: T.fB.resto, rango: null, txt: 'Resto de cultivos' };
+    const sep = Math.max(n0(plan.marco && plan.marco.filas), n0(plan.marco && plan.marco.arboles));
+    const lineas = n0(plan.lineas) >= 2 ? 2 : 1;
+    const tramo = sep > 0 && sep < 5 ? 'menos5' : 'mas5';
+    const r = T.fB.lenosos[tramo][lineas];
+    return { valor: medio(r), rango: r, txt: `${lineas} línea${lineas > 1 ? 's' : ''} de emisores · filas ${tramo === 'menos5' ? '< 5 m' : '≥ 5 m'}` };
+  }
+  function nHumus(mo, textura, T = TABLAS) {
+    mo = num(mo);
+    if (mo == null) return null;
+    const col = texturaTabla(textura);
+    const pts = T.mo.puntos, vals = T.mo[col].map(medio);
+    let v;
+    if (mo <= pts[0]) v = vals[0] * mo / pts[0];
+    else if (mo >= pts[pts.length - 1]) v = vals[vals.length - 1];
+    else {
+      let i = 0; while (mo > pts[i + 1]) i++;
+      v = vals[i] + (vals[i + 1] - vals[i]) * (mo - pts[i]) / (pts[i + 1] - pts[i]);
+    }
+    return { valor: v, txt: `MO ${String(mo).replace('.', ',')} % · ${col.toLowerCase()}` };
+  }
+
+  /* ---------- Analíticas: conversión a meq y ratios ---------- */
+  const PESO = { k: 39.1, ca: 40.08, mg: 24.3, na: 23 }, VAL = { k: 1, ca: 2, mg: 2, na: 1 };
+  function suelo(a) {
+    if (!a) return null;
+    const v = a.v || {};
+    const meq = (x) => (num(v[x]) == null ? null : (a.u && a.u[x] === 'meq/100 g' ? num(v[x]) : num(v[x]) * VAL[x] / (10 * PESO[x])));
+    const mgkg = (x) => (num(v[x]) == null ? null : (a.u && a.u[x] === 'meq/100 g' ? num(v[x]) * 10 * PESO[x] / VAL[x] : num(v[x])));
+    const r = { k: meq('k'), ca: meq('ca'), mg: meq('mg'), na: meq('na') };
+    const sumMg = ['k', 'ca', 'mg', 'na'].reduce((t, x) => t + (mgkg(x) || 0), 0);
+    const pct = (x) => (sumMg ? (mgkg(x) || 0) / sumMg : null);
+    return {
+      meq: r,
+      pctK: pct('k'), pctCa: pct('ca'), pctMg: pct('mg'),
+      kMg: r.k != null && r.mg ? r.k / r.mg : null,
+      caMg: r.ca != null && r.mg ? r.ca / r.mg : null,
+      caK: r.ca != null && r.k ? r.ca / r.k : null
+    };
+  }
+  function agua(a) {
+    if (!a) return null;
+    const v = a.v || {};
+    const m = (x, peso, val) => (num(v[x]) == null ? null : (a.u && a.u[x] === 'meq/L' ? num(v[x]) : num(v[x]) * val / peso));
+    const r = {
+      no3: m('no3', 62, 1), k: m('k', 39.1, 1), ca: m('ca', 40.08, 2), mg: m('mg', 24.3, 2), na: m('na', 23, 1),
+      so4: m('so4', 96, 2), cl: m('cl', 35.5, 1), hco3: num(v.hco3)
+    };
+    return { meq: r, kMg: r.k != null && r.mg ? r.k / r.mg : null, caMg: r.ca != null && r.mg ? r.ca / r.mg : null, caK: r.ca != null && r.k ? r.ca / r.k : null };
+  }
+
+  /* ---------- Riego (pestaña 3) ---------- */
+  function riego(plan, camp, cfg = {}) {
+    const eto = (cfg.eto && cfg.eto.length === 12) ? cfg.eto : ETO_MULA;
+    const kc = (plan.kc && plan.kc.length === 12) ? plan.kc : (cfg.kc && cfg.kc[plan.grupo]) || KC[plan.grupo] || KC.CITRICOS;
+    const T = cfg.tablas || TABLAS;
+    const a = n0(plan.marco && plan.marco.filas), b = n0(plan.marco && plan.marco.arboles);
+    const arbHa = a && b ? 10000 / (a * b) : 0;
+    const copa = n0(plan.copa);
+    const klRaw = a && b ? 1.34 * (Math.PI * copa * copa / 4) / (a * b) : 0;
+    const kl = Math.min(1, klRaw);
+    const efic = T.eficiencia[texturaRiego(plan.textura)] ?? 0.95;
+    const caudalHa = n0(plan.caudal) * n0(plan.emisores) * arbHa / 1000; // m3/ha por hora de riego
+    const sup = n0(plan.superficie);
+    const meses = (camp && camp.riego) || [];
+    let totTeo = 0, totApl = 0, acum = 0;
+    const filas = MESES.map((mes, i) => {
+      const etc = n0(eto[i]) * n0(kc[i]) * kl;
+      const nt = etc / (T.uniformidad * efic);
+      const vTeo = nt * 10; // m3/ha
+      const h = n0(meses[i] && meses[i].h), n = n0(meses[i] && meses[i].n);
+      const porRiego = h * caudalHa;
+      const riegosEst = porRiego > 0 ? Math.ceil(vTeo / porRiego) : null;
+      const horasTeo = riegosEst ? vTeo / riegosEst / caudalHa : (caudalHa ? vTeo / caudalHa : null);
+      const vApl = porRiego * n;
+      totTeo += vTeo; totApl += vApl; acum += vApl * sup;
+      return { mes, dias: DIAS[i], eto: n0(eto[i]), kc: n0(kc[i]), kl, etc, nt, vTeo, riegosEst, horasTeo, h, n, vApl, vFinca: vApl * sup, acum, porRiego };
+    });
+    return { filas, kl, klRaw, arbHa, efic, caudalHa, totTeo, totApl, totFinca: totApl * sup, consumoHora: n0(plan.caudal) * n0(plan.emisores) * n0(plan.arboles) / 1000 };
+  }
+
+  /* ---------- Balance de nitrógeno (pestaña 2) ---------- */
+  function balanceN(plan, camp, anal, modo = 'estimado', cfg = {}) {
+    const T = cfg.tablas || TABLAS;
+    camp = camp || {};
+    const s = anal.suelo, w = anal.agua;
+    const sv = (s && s.v) || {}, wv = (w && w.v) || {};
+    const no3s = num(sv.no3);
+    const ov = camp.ajustes || {};
+    const fa = ov.fA != null ? { valor: ov.fA, manual: true, txt: 'Puesto a mano' } : fA(no3s, plan.campoCartagena, T);
+    const fb = ov.fB != null ? { valor: ov.fB, manual: true, txt: 'Puesto a mano' } : fB(plan, T);
+    const hum = ov.humus != null ? { valor: ov.humus, manual: true, txt: 'Puesto a mano' } : nHumus(sv.mo, sv.textura, T);
+    const E1 = no3s != null && fa && fb ? no3s * fa.valor / 100 * fb.valor * 5 * 0.226 : 0;
+    const E2 = hum && fb ? hum.valor * fb.valor : 0;
+    const est = (camp.estiercoles || []).map((e) => {
+      const a = anal.estiercoles && anal.estiercoles[e.analId];
+      const v = (a && a.v) || {};
+      const tipo = T.estiercol.find((t) => norm(t.tipo) === norm(v.tipo)) || null;
+      const ms = num(v.ms) ?? (tipo && tipo.humedo ? 100 : T.msDefecto);
+      const nPct = num(v.n) ?? (tipo ? medio(tipo.n) : 0);
+      const anio = Math.min(3, Math.max(1, n0(e.anio) || 1));
+      const minPct = tipo ? tipo.min[anio - 1] : 0;
+      const dosis = n0(e.dosis);
+      const nTotal = dosis * nPct / 100 * ms / 100;
+      return { nombre: (a && (a.nombre || v.tipo)) || 'Estiércol', tipo: v.tipo || '', dosis, ms, nPct, anio, minPct, nTotal, nMin: nTotal * minPct / 100, p2o5: dosis * n0(v.p2o5) / 100 * ms / 100, k2o: dosis * n0(v.k2o) / 100 * ms / 100, cao: dosis * n0(v.cao) / 100 * ms / 100, mgo: dosis * n0(v.mgo) / 100 * ms / 100, analId: e.analId };
+    });
+    const E3 = est.reduce((t, e) => t + e.nMin, 0);
+    const rg = riego(plan, camp, cfg);
+    const dosisRiego = modo === 'cerrado'
+      ? (num(camp.dosisRealM3) ?? rg.totApl)
+      : (num(camp.dosisEstM3) ?? rg.totApl);
+    const no3w = num(wv.no3);
+    const E4 = no3w != null ? no3w * dosisRiego * 0.226 / 1000 * 0.9 : 0;
+    const prod = modo === 'cerrado' ? num(camp.produccionReal) : num(camp.produccionEst);
+    const coef = num(camp.coefExtraccion);
+    const S1 = n0(prod) * n0(coef);
+    const entradas = E1 + E2 + E3 + E4;
+    const aporte = Math.max(0, S1 - entradas);
+    const nOrgTotal = est.reduce((t, e) => t + e.nTotal, 0);
+    const nAplicado = (camp.ufAplicadas || []).reduce((t, m) => t + n0(m && m[0]), 0);
+    return {
+      modo, no3s, fa, fb, hum, E1, E2, E3, E4, est, dosisRiego, dosisRiegoAuto: rg.totApl, no3w, prod, coef, S1, entradas, aporte, aporteBruto: S1 - entradas,
+      nOrgTotal, nAplicado, excede: nAplicado > aporte + 0.05 && nAplicado > 0, excedeOrg: plan.vulnerable && nOrgTotal > T.limiteNOrganico
+    };
+  }
+
+  /* Aportes del estiércol a P, K, Ca y Mg (resta siempre, sea o no zona vulnerable) */
+  function aportesEstiercol(b) {
+    return b.est.reduce((t, e) => ({ n: t.n + e.nMin, p2o5: t.p2o5 + e.p2o5, k2o: t.k2o + e.k2o, cao: t.cao + e.cao, mgo: t.mgo + e.mgo }), { n: 0, p2o5: 0, k2o: 0, cao: 0, mgo: 0 });
+  }
+
+  /* ---------- Avisos de un plan ---------- */
+  function edadAnios(fecha, hoy = new Date()) {
+    if (!fecha) return null;
+    const d = new Date(fecha);
+    if (isNaN(d)) return null;
+    return (hoy - d) / (365.25 * 24 * 3600 * 1000);
+  }
+  function avisos(plan, campKey, db, cfg = {}, hoy = new Date()) {
+    const T = cfg.tablas || TABLAS;
+    const out = [];
+    const camp = plan.campanas && plan.campanas[campKey];
+    const an = (id) => db.analiticas.find((a) => a.id === id) || null;
+    const s = an(plan.analSuelo), w = an(plan.analAgua);
+    const add = (nivel, txt, donde) => out.push({ nivel, txt, donde });
+    for (const [a, tipo, nombre] of [[s, 'suelo', 'suelo'], [w, 'agua', 'agua de riego']]) {
+      if (!a) { add('alto', `Sin analítica de ${nombre}`, 'analiticas'); continue; }
+      if (a.plantilla) { add('alto', `Analítica de ${nombre} de plantilla (no es de esta finca)`, 'analiticas'); continue; }
+      const e = edadAnios(a.fecha, hoy);
+      const max = (T.antiguedad && T.antiguedad[tipo]) || 4;
+      if (e != null && e > max) add('medio', `Analítica de ${nombre} de hace ${String(Math.round(e * 10) / 10).replace('.', ',')} años (máx. ${max})`, 'analiticas');
+      const nueva = db.analiticas.find((x) => x.tipo === tipo && x.id !== a.id && !x.plantilla && x.fecha && a.fecha && x.fecha > a.fecha &&
+        db.planes.some((p) => (tipo === 'suelo' ? p.analSuelo : p.analAgua) === x.id && p.id !== plan.id && p.carpeta && p.carpeta === plan.carpeta));
+      if (nueva) add('medio', `Hay una analítica de ${nombre} más nueva en esta finca (${nueva.fecha})`, 'analiticas');
+    }
+    if (!camp) { add('alto', `Sin datos de la campaña ${campKey}`, 'finca'); return out; }
+    const anal = { suelo: s, agua: w, estiercoles: Object.fromEntries(db.analiticas.filter((a) => a.tipo === 'estiercol').map((a) => [a.id, a])) };
+    const b = balanceN(plan, camp, anal, 'estimado', cfg);
+    if (b.excede) add('alto', `N del plan ${r2(b.nAplicado, 1)} kg/ha supera el balance (${r2(b.aporte, 1)} kg/ha)`, 'balance');
+    if (b.excedeOrg) add('alto', `N orgánico ${r2(b.nOrgTotal, 0)} kg/ha supera el límite de ${T.limiteNOrganico} kg/ha`, 'balance');
+    if (!num(camp.produccionEst)) add('medio', 'Falta la producción estimada', 'balance');
+    if (!num(camp.coefExtraccion)) add('medio', 'Falta el coeficiente de extracción', 'balance');
+    if (camp.plantillaProd) add('bajo', 'Producción y coeficiente de plantilla (20 t/ha · 6 kg N/t): revísalos', 'balance');
+    if (!(camp.riego || []).some((m) => m && m.h && m.n)) add('medio', 'Sin horas ni riegos programados', 'riego');
+    if (s && !s.plantilla && s.v && s.v.textura && plan.textura && texturaTabla(s.v.textura) !== texturaTabla(plan.textura)) add('bajo', `Textura distinta en el riego (${plan.textura}) y en la analítica (${s.v.textura})`, 'riego');
+    if (!plan.marco || !n0(plan.marco.filas) || !n0(plan.marco.arboles)) add('medio', 'Falta el marco de plantación', 'finca');
+    return out;
+  }
+
+  const api = { MESES, GRUPOS, TEXTURAS, CULTIVOS, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CALC = api;
+})(typeof window !== 'undefined' ? window : globalThis);
