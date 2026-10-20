@@ -15,7 +15,14 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 - Año de plantación de cada plan (edad por campaña).
 - Pendiente: necesidades por cultivo y edad según bibliografía.
 
-Próximas fases: productos, dosis y tanques (3) e informe mensual por lotes (4).
+**Fase 3 (versión 1.3):**
+- **Productos**: base de datos con riquezas (N, P2O5, K2O, CaO, MgO, S, Fe, Zn, Mn, N nítrico y amoniacal), densidad, tanque habitual (1, 2 o E) y familia de los E; se importa del Excel `Cuaderno de campo/Calculadoras Excel/Base de datos/Productos Gestion fertirrigacion.xlsx` y se enlaza con el maestro de productos.
+- **Fertirrigación** de cada mes: productos, dosis por riego (g o cc/pie, kg o L/ha), riegos, periodo y tanque (automático: los E del mismo momento del mes van juntos y los orgánicos aparte; se puede cambiar a mano). Cantidad por riego en la finca y por pie, UF y comparación con el objetivo del mes.
+- Copiar el mismo mes de la campaña anterior o el mes anterior; **Ajustar al objetivo** (cambia las dosis de los tanques 1 y 2 para acercar N, P2O5 y K2O cambiando lo menos posible la mezcla).
+- **Solución nutritiva** (solo para el técnico): iones en meq/L, CE estimada, % de cationes y aniones con rangos y ácido para bajar los bicarbonatos.
+- El N del plan del balance sale ya de estas líneas (igual que en el Excel: 899 de 912 meses idénticos; el resto por cambios de riqueza en la tabla de productos).
+
+Próxima fase: informe mensual por lotes (4).
 
 ## Dónde están los datos (desde la versión 1.1)
 En **Google Drive**, no en este repositorio (es público: aquí no hay datos de clientes).

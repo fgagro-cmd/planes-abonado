@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -46,10 +46,12 @@ function migrar(d) {
   d.config.kc = { ...v.config.kc, ...(d.config.kc || {}) };
   d.config.antiguedad = { ...v.config.antiguedad, ...(d.config.antiguedad || {}) };
   d.config.mx = d.config.mx || { url: '', clave: '' };
-  d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || [];
+  d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
 }
-const cfg = () => ({ eto: db.config.eto, kc: db.config.kc, tablas: { ...CALC.TABLAS, antiguedad: db.config.antiguedad, limiteNOrganico: +db.config.limiteNOrganico || 170 } });
+let ixCache = { ref: null, ix: null };
+function ixProd() { if (!db) return FERT.indice([]); if (ixCache.ref !== db.productos || ixCache.n !== db.productos.length) ixCache = { ref: db.productos, n: db.productos.length, ix: FERT.indice(db.productos) }; return ixCache.ix; }
+const cfg = () => ({ ufDe: (p, c) => FERT.ufCampana(p, c, ixProd()), eto: db.config.eto, kc: db.config.kc, tablas: { ...CALC.TABLAS, antiguedad: db.config.antiguedad, limiteNOrganico: +db.config.limiteNOrganico || 170 } });
 const planSel = () => db && db.planes.find((p) => p.id === ui.planId) || null;
 const anal = (id) => (id ? db.analiticas.find((a) => a.id === id) || null : null);
 const campDe = (p) => (p && p.campanas ? p.campanas[ui.camp] : null);
@@ -143,8 +145,19 @@ async function arrancar() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!window.__reloj) window.__reloj = setInterval(() => { comprobarCambios(); }, 90000);
 }
+function asegurarFert(d) {
+  let cambio = false;
+  const ix = FERT.indice(d.productos);
+  for (const p of d.planes) for (const c of Object.values(p.campanas || {})) {
+    if (!c.fert && c.excel && c.excel.meses) { c.fert = FERT.fertDesdeExcel(c.excel.meses); cambio = true; }
+    for (const m of Object.values(c.fert || {})) for (const l of (m && m.lineas) || []) if (!l.prodId) { const pr = ix.nom.get(CALC.norm(l.nombre)); if (pr) { l.prodId = pr.id; cambio = true; } }
+  }
+  return cambio;
+}
 function postCarga() {
-  if (db && conn === 'listo' && IMP.asegurarRepartos(db)) commit(() => {}, { render: false });
+  if (!db || conn !== 'listo') return;
+  const a = IMP.asegurarRepartos(db), b = asegurarFert(db);
+  if (a || b) commit(() => {}, { render: false });
 }
 function prepararVista() {
   if (!db) return;
@@ -252,6 +265,7 @@ function renderAll() {
     sel.onchange = () => { ui.camp = sel.value; renderAll(); };
     $('#nPlanes').textContent = db.planes.length || '';
     $('#nAnal').textContent = db.analiticas.length || '';
+    $('#nProd').textContent = db.productos.length || '';
     const conAlto = db.planes.filter((p) => avisosDe(p).some((a) => a.nivel === 'alto')).length;
     $('#nAvisos').textContent = conAlto || '';
   }
@@ -263,6 +277,7 @@ function renderAll() {
   else if (ui.vista === 'analiticas') renderAnaliticas(v);
   else if (ui.vista === 'avisos') renderAvisos(v);
   else if (ui.vista === 'repartos') renderRepartos(v);
+  else if (ui.vista === 'productos') renderProductos(v);
   else renderAjustes(v);
 }
 
@@ -350,7 +365,7 @@ function renderDetalle(el) {
       <div class="kpi ${av.some((a) => a.nivel === 'alto') ? 'rojo' : ''}"><span>Avisos</span><strong>${av.length}</strong></div></div>`;
   }
   const nAv = (d) => av.filter((a) => a.donde === d).length;
-  const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto']];
+  const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto'], ['fert', 'Fertirrigación']];
   el.innerHTML = `<div class="card"><div class="cab"><div class="t"><h2>${esc(p.nombre)}</h2>
       <div class="muted">${esc(p.cliente)} › ${esc(p.finca)} · ${esc(p.cultivo)} · ${fmt(p.superficie, 2)} ha · ${fmt(p.arboles, 0)} árboles</div>
       <div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
@@ -365,6 +380,7 @@ function renderDetalle(el) {
   else if (ui.tab === 'analiticas') tabAnaliticas(body, p, camp);
   else if (ui.tab === 'riego') tabRiego(body, p, camp);
   else if (ui.tab === 'necesidades') tabNecesidades(body, p, camp);
+  else if (ui.tab === 'fert') tabFert(body, p, camp);
   else tabBalance(body, p, camp);
 }
 
@@ -697,7 +713,8 @@ function tabBalance(el, p, camp) {
   const sug = cult ? ext.find((e) => e.cultivo === cult.extraccion) : null;
   const ex = camp.excel;
   const pdfE = camp.pdf && camp.pdf.estimado, pdfC = camp.pdf && camp.pdf.cerrado;
-  const uf = camp.ufAplicadas || CALC.MESES.map(() => [0, 0, 0, 0, 0]);
+  const ufCalc = FERT.ufCampana(p, camp, ixProd());
+  const uf = ufCalc || camp.ufAplicadas || CALC.MESES.map(() => [0, 0, 0, 0, 0]);
   const autoTxt = (o) => (o ? `${o.manual ? 'Puesto a mano' : 'Automático'}: ${fmt(o.valor, 3)} · ${esc(o.txt || '')}` : 'Falta la analítica de suelo');
   el.innerHTML = `<div class="grid4">
       ${campo('Producción estimada (t/ha)', 'c.produccionEst', camp.produccionEst)}
@@ -721,9 +738,9 @@ function tabBalance(el, p, camp) {
     </div>
     ${p.vulnerable ? `<div class="aviso ${bE.excedeOrg ? 'alto' : 'bajo'}" style="margin-top:12px">Zona vulnerable · N orgánico total aplicado: <b>${fmt(bE.nOrgTotal, 1)} kg N/ha</b> (límite ${fmt(cfg().tablas.limiteNOrganico, 0)}).</div>` : ''}
     <h3 style="margin-top:20px">N del plan de fertirrigación (kg UF/ha)</h3>
-    <p class="small muted">${ex ? 'Importado del Excel. En la fase 3 se calculará solo con los productos de cada mes.' : 'Se calculará con los productos de cada mes en la fase 3. Mientras, puedes escribirlo.'}</p>
+    <p class="small muted">${ufCalc ? 'Calculado con los productos y dosis de cada mes (pestaña Fertirrigación).' : 'Sin productos en la pestaña Fertirrigación: puedes escribirlo a mano.'}</p>
     <div class="scroll-x"><table class="t"><tr><th></th>${CALC.MESES.map((m) => `<th class="n">${m.slice(0, 3)}</th>`).join('')}<th class="n">Total</th></tr>
-      ${['N', 'P2O5', 'K2O', 'CaO', 'MgO'].map((nu, j) => `<tr><td><b>${nu}</b></td>${uf.map((m, i) => `<td><input class="cell" data-uf="${i}.${j}" value="${fmtIn(m && m[j] ? Math.round(m[j] * 10) / 10 : '')}"></td>`).join('')}<td class="n"><b>${fmt(uf.reduce((t, m) => t + (+(m && m[j]) || 0), 0), 1)}</b></td></tr>`).join('')}</table></div>
+      ${['N', 'P2O5', 'K2O', 'CaO', 'MgO'].map((nu, j) => `<tr><td><b>${nu}</b></td>${uf.map((m, i) => (ufCalc ? `<td class="n">${m[j] ? fmt(m[j], 1) : '<span class="muted">–</span>'}</td>` : `<td><input class="cell" data-uf="${i}.${j}" value="${fmtIn(m && m[j] ? Math.round(m[j] * 10) / 10 : '')}"></td>`)).join('')}<td class="n"><b>${fmt(uf.reduce((t, m) => t + (+(m && m[j]) || 0), 0), 1)}</b></td></tr>`).join('')}</table></div>
     <div class="res ${bE.excede ? 'rojo' : ''}" style="margin-top:10px"><span>N del plan frente al permitido (estimado)</span><strong>${fmt(bE.nAplicado, 1)} / ${fmt(bE.aporte, 1)} kg N/ha</strong></div>
     ${ex && ex.nBalance != null ? `<p class="small muted" style="margin-top:10px">En el Excel salía ${fmt(ex.nBalance, 1)} kg N/ha (sin fA, fB ni humus, y con ${fmt(ex.dosisRiego, 0)} m³/ha de riego escritos a mano).</p>` : ''}`;
   enlazarCampos(el, p);
@@ -790,7 +807,7 @@ async function traerV10() {
   if (!d || !d.planes) { toast('No hay datos de la versión 1.0 en esta carpeta', true); return; }
   if (db.planes.length && !confirm(`Drive ya tiene ${db.planes.length} planes. ¿Sustituirlos por los ${d.planes.length} de la versión 1.0?`)) return;
   const logo = await ALM.logo();
-  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; IMP.asegurarRepartos(db); });
+  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; IMP.asegurarRepartos(db); asegurarFert(db); });
   prepararVista(); renderAll();
   toast(`${plural(d.planes.length, 'plan traído', 'planes traídos')} de la versión 1.0`);
 }
@@ -928,6 +945,202 @@ function renderRepartos(v) {
   $('#rDup', v).onclick = () => { const n = { ...structuredClone(r), id: uid('r'), nombre: r.nombre + ' (copia)' }; commit((d) => { d.repartos.push(n); ui.repId = n.id; }); };
   $('#rDel', v).onclick = () => { if (!confirm(`¿Borrar el tipo «${r.nombre}»?`)) return; commit((d) => { d.repartos = d.repartos.filter((x) => x.id !== r.id); ui.repId = null; }); };
   enlazarGrafica(v, () => renderRepartos(v));
+}
+
+/* ---------- FERTIRRIGACIÓN del mes ---------- */
+const TANQUES = ['1', '2', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6'];
+function mesInicial() { const hoy = new Date(); return String(hoy.getFullYear()) === String(ui.camp) ? hoy.getMonth() : 0; }
+function campAnteriorCon(p, i) {
+  return Object.keys(p.campanas || {}).filter((k) => k < ui.camp).sort().reverse().find((k) => { const f = p.campanas[k].fert; return f && f[i] && f[i].lineas && f[i].lineas.length; }) || null;
+}
+function opcionesProducto(sel, nombreLibre) {
+  const ix = ixProd();
+  const grupos = { 1: [], 2: [], E: [] };
+  for (const pr of [...db.productos].filter((x) => x.activo !== false).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))) (grupos[pr.tanque] || grupos[1]).push(pr);
+  const conocido = sel && ix.id.has(sel);
+  return `${!conocido && nombreLibre ? `<option value="" selected>${esc(nombreLibre)} (no está en Productos)</option>` : ''}<option value="" ${!sel && !nombreLibre ? 'selected' : ''}>— Elegir producto —</option>` +
+    [['1', 'Tanque 1'], ['2', 'Tanque 2'], ['E', 'Especiales (E)']].map(([k, t]) => `<optgroup label="${t}">${grupos[k].map((pr) => `<option value="${pr.id}" ${pr.id === sel ? 'selected' : ''}>${esc(pr.nombre)}</option>`).join('')}</optgroup>`).join('');
+}
+function tabFert(el, p, camp) {
+  if (!camp) { el.innerHTML = '<p class="muted">Crea antes la campaña.</p>'; return; }
+  if (ui.mes == null) ui.mes = mesInicial();
+  const i = ui.mes;
+  const ix = ixProd();
+  const fm = (camp.fert && camp.fert[i]) || { lineas: [] };
+  const m = FERT.mes(p, camp, i, ix);
+  const rep = db.repartos.find((r) => r.id === p.reparto) || null;
+  const nc = CALC.necesidades(p, camp, analDePlan(p), cfg(), rep);
+  const obj = nc.mensual ? nc.mensual[i] : null;
+  const rg = CALC.riego(p, camp, cfg()).filas[i];
+  const ant = campAnteriorCon(p, i);
+  const conLineas = (k) => camp.fert && camp.fert[k] && camp.fert[k].lineas && camp.fert[k].lineas.length;
+  const chips = CALC.MESES.map((mm, k) => `<button class="mes-chip ${k === i ? 'on' : ''}" data-mes="${k}">${mm.slice(0, 3)}${conLineas(k) ? '<i></i>' : ''}</button>`).join('');
+  const comp = NUT_TXT.map((nu, j) => {
+    const o = obj ? obj[j] : null, a = m.uf[j];
+    const dif = o == null ? null : a - o;
+    const pc = o ? a / o * 100 : null;
+    const clase = o == null || (!o && !a) ? '' : (o && Math.abs(dif) / o <= 0.1) || (!o && a < 0.5) ? 'chip v' : 'chip amb';
+    return `<tr><td><b>${nu}</b></td><td class="n">${o == null ? '–' : fmt(o, 1)}</td><td class="n"><b>${fmt(a, 1)}</b></td><td class="n">${dif == null ? '–' : (dif > 0 ? '+' : '') + fmt(dif, 1)}</td><td class="n">${pc == null ? '' : `<span class="${clase}">${fmt(pc, 0)} %</span>`}</td></tr>`;
+  }).join('');
+  const filas = m.lineas.map((l, k) => `<tr>
+      <td><select class="cell izq" data-fl="${k}" data-c="prodId">${opcionesProducto(l.prod ? l.prod.id : null, l.prod ? null : l.nombre)}</select></td>
+      <td class="w"><input class="cell" data-fl="${k}" data-c="dosis" value="${fmtIn(l.dosis)}"></td>
+      <td><select class="cell izq" data-fl="${k}" data-c="formato"><option value="pie" ${l.formato !== 'ha' ? 'selected' : ''}>${l.liquido ? 'cc' : 'g'}/pie</option><option value="ha" ${l.formato === 'ha' ? 'selected' : ''}>${l.liquido ? 'L' : 'kg'}/ha</option></select></td>
+      <td class="w" style="width:60px"><input class="cell" data-fl="${k}" data-c="riegos" value="${fmtIn(l.riegos)}"></td>
+      <td><input class="cell izq" list="periodosL" data-fl="${k}" data-c="periodo" value="${esc(l.periodo || '')}"></td>
+      <td><select class="cell izq" data-fl="${k}" data-c="tanque"><option value="">Auto (${esc(l.tanqueAuto ? l.tanqueFinal : (l.prod ? (l.prod.tanque === 'E' ? 'E' : l.prod.tanque) : '1'))})</option>${TANQUES.map((t) => `<option ${!l.tanqueAuto && l.tanqueFinal === t ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
+      <td class="n">${fmt(l.porRiegoFinca, 2)} ${l.liquido ? 'L' : 'kg'}</td>
+      <td class="n">${fmt(l.porPie, 1)} ${l.liquido ? 'cc' : 'g'}</td>
+      <td class="n">${fmt(l.uf.n, 1)}</td><td class="n">${fmt(l.uf.p2o5, 1)}</td><td class="n">${fmt(l.uf.k2o, 1)}</td>
+      <td><button class="btn peq rojo" data-fdel="${k}" title="Quitar">×</button></td></tr>`).join('');
+  // Resumen por tanque
+  const porT = {};
+  for (const l of m.lineas) (porT[l.tanqueFinal] = porT[l.tanqueFinal] || []).push(l);
+  const resumenT = Object.keys(porT).sort((a, b) => (a[0] === 'E') - (b[0] === 'E') || a.localeCompare(b, 'es', { numeric: true })).map((t) => `<div class="tanque"><b>${t === '1' || t === '2' ? 'Tanque ' + t : t}</b>${porT[t].map((l) => `<span>${esc(l.prod ? l.prod.nombre : l.nombre)} · ${fmt(l.porRiegoFinca, 2)} ${l.liquido ? 'L' : 'kg'}/riego${l.periodo ? ' · ' + esc(l.periodo) : ''}</span>`).join('')}</div>`).join('');
+  const sol = FERT.solucion(p, camp, i, m, anal(p.analAgua), cfg());
+  const rango = (x, r) => (x == null ? '–' : `<span class="${x < r[0] || x > r[1] ? 'chip amb' : 'chip v'}">${fmt(x, 0)} %</span> <span class="muted small">${r[0]}-${r[1]}</span>`);
+  el.innerHTML = `<div class="meses">${chips}</div>
+    <div class="grid2" style="margin-top:12px">
+      <div><h3>${CALC.MESES[i]} · objetivo y plan (kg UF/ha)</h3>
+        <table class="t"><tr><th></th><th class="n">Objetivo</th><th class="n">Plan</th><th class="n">Diferencia</th><th class="n">%</th></tr>${comp}</table>
+        ${!obj ? '<p class="small muted">Sin objetivo: elige el tipo de reparto y las necesidades en «Necesidades y reparto».</p>' : ''}</div>
+      <div><h3>Riego de ${CALC.MESES[i].toLowerCase()}</h3>
+        <div class="row small"><span class="chip">${rg.n || 0} riegos de ${hhmm(rg.h) || '0:00'} h</span><span class="chip">${fmt(rg.vApl, 0)} m³/ha</span><span class="chip">${fmt(rg.vFinca, 0)} m³ en la finca</span></div>
+        <div class="tanques" style="margin-top:10px">${resumenT || '<p class="muted small">Sin productos este mes.</p>'}</div></div></div>
+    <h3 style="margin-top:16px">Productos</h3>
+    <datalist id="periodosL">${FERT.PERIODOS.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+    <div class="scroll-x"><table class="t fert"><tr><th>Producto</th><th class="n">Dosis/riego</th><th>Unidad</th><th class="n">Riegos</th><th>Periodo</th><th>Tanque</th><th class="n">Por riego finca</th><th class="n">Por pie</th><th class="n">N</th><th class="n">P2O5</th><th class="n">K2O</th><th></th></tr>
+      ${filas || '<tr><td colspan="12" class="muted">Sin productos este mes.</td></tr>'}</table></div>
+    ${m.sinProducto ? `<div class="aviso" style="margin-top:8px">${plural(m.sinProducto, 'producto no está', 'productos no están')} en la base de datos de Productos: no suman UF. ${db.productos.length ? 'Elígelos en la lista o dalos de alta en Productos.' : 'Importa antes tus productos (sección Productos).'}</div>` : ''}
+    <div class="row" style="margin-top:10px">
+      <button class="btn peq" id="fAdd">+ Añadir producto</button>
+      ${ant ? `<button class="btn peq" id="fAnt">Copiar ${CALC.MESES[i].toLowerCase()} de ${esc(ant)}</button>` : ''}
+      ${i > 0 && conLineas(i - 1) ? `<button class="btn peq" id="fPrev">Copiar de ${CALC.MESES[i - 1].toLowerCase()}</button>` : ''}
+      <button class="btn peq p" id="fAjus" ${obj && m.lineas.length ? '' : 'disabled'}>Ajustar al objetivo</button>
+      <button class="btn peq" id="fTq" ${m.lineas.some((l) => !l.tanqueAuto) ? '' : 'disabled'}>Tanques automáticos</button>
+      <span class="spacer"></span><button class="btn peq rojo" id="fVac" ${m.lineas.length ? '' : 'disabled'}>Vaciar mes</button></div>
+    <details style="margin-top:16px" ${ui.verSol ? 'open' : ''} id="fSolD"><summary class="small" style="cursor:pointer"><b>Solución nutritiva de ${CALC.MESES[i].toLowerCase()}</b> <span class="muted">(solo para ti, para ajustar la nutrición)</span></summary>
+      ${sol ? `<div class="grid2" style="margin-top:10px">
+        <div><table class="t"><tr><th>Ion</th><th class="n">meq/L</th></tr>${[['NO3-', 'no3'], ['NH4+', 'nh4'], ['H2PO4-', 'h2po4'], ['K+', 'k'], ['Ca2+', 'ca'], ['Mg2+', 'mg'], ['SO4 2-', 'so4'], ['Na+', 'na'], ['Cl-', 'cl'], ['HCO3-', 'hco3']].map(([t, k]) => `<tr><td>${t}</td><td class="n">${fmt(sol.meq[k], 2)}</td></tr>`).join('')}
+          <tr class="tot"><td>CE estimada</td><td class="n">${fmt(sol.ce, 2)} dS/m</td></tr></table></div>
+        <div><table class="t"><tr><th>Cationes</th><th>% (ideal)</th></tr>${sol.cationes.map(([t, x, r]) => `<tr><td>${t}</td><td>${rango(x, r)}</td></tr>`).join('')}</table>
+          <table class="t" style="margin-top:8px"><tr><th>Aniones</th><th>% (ideal)</th></tr>${sol.aniones.map(([t, x, r]) => `<tr><td>${t}</td><td>${rango(x, r)}</td></tr>`).join('')}</table>
+          <div class="row small" style="margin-top:8px"><span class="chip">NH4 ${fmt(sol.nh4pct, 0)} % del N</span><span class="chip">Fe ${fmt(sol.micro.fe, 2)} mg/L</span><span class="chip">Zn ${fmt(sol.micro.zn, 2)}</span><span class="chip">Mn ${fmt(sol.micro.mn, 2)}</span><span class="chip">B ${fmt(sol.micro.b, 2)}</span></div>
+          <p class="small" style="margin-top:8px">Para bajar los bicarbonatos a 0,5 meq/L: <b>${fmt(sol.acidoNitrico, 1)} L/ha</b> de ácido nítrico o <b>${fmt(sol.acidoFosforico, 1)} L/ha</b> de fosfórico en el mes (${fmt(sol.acidoNitrico * (p.superficie || 0), 1)} o ${fmt(sol.acidoFosforico * (p.superficie || 0), 1)} L en la finca).</p></div></div>`
+      : '<p class="muted small">Sin riego programado este mes: no se puede calcular la concentración.</p>'}</details>`;
+  const guardarLineas = (fn) => { commit(() => { camp.fert = camp.fert || {}; camp.fert[i] = camp.fert[i] || { lineas: [] }; fn(camp.fert[i].lineas); }, { render: false }); renderDetalleSoloCuerpo(); };
+  $$('[data-mes]', el).forEach((b) => { b.onclick = () => { ui.mes = +b.dataset.mes; renderDetalleSoloCuerpo(); }; });
+  $$('[data-fl]', el).forEach((inp) => inp.addEventListener('change', () => {
+    const k = +inp.dataset.fl, c = inp.dataset.c;
+    guardarLineas((ls) => {
+      const l = ls[k];
+      if (c === 'prodId') { const pr = ix.id.get(inp.value); if (pr) { l.prodId = pr.id; l.nombre = pr.nombre; } }
+      else if (c === 'dosis' || c === 'riegos') l[c] = CALC.num(inp.value) ?? 0;
+      else if (c === 'tanque') l.tanque = inp.value || null;
+      else l[c] = inp.value;
+    });
+  }));
+  $$('[data-fdel]', el).forEach((b) => { b.onclick = () => guardarLineas((ls) => ls.splice(+b.dataset.fdel, 1)); });
+  $('#fSolD', el).ontoggle = (e) => { ui.verSol = e.target.open; };
+  $('#fAdd', el).onclick = () => guardarLineas((ls) => ls.push({ prodId: null, nombre: '', dosis: 0, formato: 'pie', riegos: rg.n || 0, periodo: 'Resto mes', tanque: null }));
+  if ($('#fAnt', el)) $('#fAnt', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(p.campanas[ant].fert[i].lineas)); }); toast(`Copiado ${CALC.MESES[i].toLowerCase()} de ${ant}`); };
+  if ($('#fPrev', el)) $('#fPrev', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rg.n || l.riegos) : l.riegos }))); }); };
+  $('#fTq', el).onclick = () => guardarLineas((ls) => ls.forEach((l) => { l.tanque = null; }));
+  $('#fVac', el).onclick = () => { if (confirm(`¿Quitar todos los productos de ${CALC.MESES[i].toLowerCase()}?`)) guardarLineas((ls) => ls.splice(0, ls.length)); };
+  $('#fAjus', el).onclick = () => {
+    const r = FERT.ajustar(p, camp, i, ix, obj);
+    if (!r.nVars) { toast('No hay abonos de los tanques 1 y 2 con dosis para ajustar', true); return; }
+    const cambios = Object.entries(r.dosis).map(([k, d]) => { const l = m.lineas[+k]; return `<tr><td>${esc(l.prod ? l.prod.nombre : l.nombre)}</td><td class="n">${fmt(l.dosis, 1)}</td><td class="n"><b>${fmt(d, 1)}</b></td><td>${l.formato === 'ha' ? (l.liquido ? 'L' : 'kg') + '/ha' : (l.liquido ? 'cc' : 'g') + '/pie'}</td></tr>`; }).join('');
+    const md = modal('Ajustar al objetivo', `<p class="small">Cambia las dosis de los abonos de los tanques 1 y 2 para acercar N, P2O5 y K2O al objetivo de ${CALC.MESES[i].toLowerCase()}, cambiando lo menos posible la mezcla. Los especiales (E) no se tocan.</p>
+      <table class="t"><tr><th>Producto</th><th class="n">Ahora</th><th class="n">Propuesta</th><th></th></tr>${cambios}</table>
+      <table class="t" style="margin-top:10px"><tr><th></th><th class="n">Objetivo</th><th class="n">Queda</th></tr>${['N', 'P2O5', 'K2O'].map((nu, j) => `<tr><td>${nu}</td><td class="n">${fmt(obj[j], 1)}</td><td class="n">${fmt(r.resultado[j], 1)}</td></tr>`).join('')}</table>
+      ${r.lejos.length ? `<div class="aviso" style="margin-top:10px">${r.lejos.map((x) => `${x.nutriente} se queda en ${fmt(x.queda, 1)} de ${fmt(x.objetivo, 1)}`).join('; ')}. Con estos productos no se llega: añade o cambia algún abono.</div>` : ''}`,
+    { pie: '<button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="ajOk">Aplicar</button>' });
+    $$('[data-cerrar]', md).forEach((b) => { b.onclick = cerrarModal; });
+    $('#ajOk', md).onclick = () => { cerrarModal(); guardarLineas((ls) => { for (const [k, d] of Object.entries(r.dosis)) ls[+k].dosis = d; }); toast('Dosis ajustadas'); };
+  };
+}
+
+/* ---------- PRODUCTOS ---------- */
+const RUTA_PRODUCTOS = 'Cuaderno de campo/Calculadoras Excel/Base de datos/Productos Gestion fertirrigacion.xlsx';
+function usosProducto(pr) {
+  let n = 0;
+  for (const p of db.planes) for (const c of Object.values(p.campanas || {})) for (const m of Object.values(c.fert || {})) for (const l of (m && m.lineas) || []) if (l.prodId === pr.id) n++;
+  return n;
+}
+function renderProductos(v) {
+  const q = CALC.norm(ui.qProd || '');
+  const lista = db.productos.filter((x) => !q || CALC.norm(x.nombre).includes(q)).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  const fam = { micro: 'Quelatos y micro', organico: 'Orgánicos', bio: 'Bioestimulantes y otros' };
+  v.innerHTML = `<div class="card"><div class="row"><h2>Productos</h2><span class="spacer"></span>
+      <input id="prQ" type="search" placeholder="Buscar…" value="${esc(ui.qProd || '')}" style="background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:6px 10px">
+      ${od !== 'no-disponible' ? '<button class="btn peq" id="prImp">Importar de mi Excel de productos</button>' : ''}<button class="btn peq p" id="prNuevo">+ Nuevo</button></div>
+    <p class="small muted">Riquezas en %. Tanque habitual: 1, 2 o especial (E). Los especiales que van en el mismo momento del mes comparten E; los orgánicos van en un E aparte.</p>
+    ${db.productos.length ? `<div class="scroll-x"><table class="t"><tr><th>Producto</th><th class="n">N</th><th class="n">P2O5</th><th class="n">K2O</th><th class="n">CaO</th><th class="n">MgO</th><th class="n">S</th><th class="n">Fe</th><th class="n">Zn</th><th class="n">Mn</th><th class="n">Dens.</th><th>Tanque</th><th class="n">Usos</th><th>Maestro</th></tr>
+    ${lista.map((x) => `<tr class="click" data-pr="${x.id}"><td><b>${esc(x.nombre)}</b>${x.activo === false ? ' <span class="chip">inactivo</span>' : ''}</td>${['n', 'p2o5', 'k2o', 'cao', 'mgo', 's', 'fe', 'zn', 'mn'].map((r) => `<td class="n">${x.riq[r] ? fmt(x.riq[r], x.riq[r] % 1 ? 1 : 0) : '<span class="muted">·</span>'}</td>`).join('')}<td class="n">${fmt(x.densidad, 2)}</td><td>${x.tanque === 'E' ? `<span class="chip azul">E · ${esc(fam[x.familia] || '')}</span>` : `<span class="chip">Tanque ${x.tanque}</span>`}</td><td class="n">${usosProducto(x)}</td><td class="small">${x.mxId ? esc(x.mxId) : '<span class="muted">–</span>'}</td></tr>`).join('')}</table></div>`
+    : `<div class="vacio"><p>Aún no hay productos. ${od !== 'no-disponible' ? 'Impórtalos de tu Excel <code>Productos Gestion fertirrigacion.xlsx</code>.' : 'Impórtalos desde el ordenador.'}</p></div>`}</div>`;
+  const qi = $('#prQ', v); qi.oninput = () => { ui.qProd = qi.value; const pos = qi.selectionStart; renderProductos(v); const n = $('#prQ'); n.focus(); n.setSelectionRange(pos, pos); };
+  if ($('#prImp', v)) $('#prImp', v).onclick = importarProductos;
+  $('#prNuevo', v).onclick = () => editarProducto(null);
+  $$('[data-pr]', v).forEach((r) => { r.onclick = () => editarProducto(db.productos.find((x) => x.id === r.dataset.pr)); });
+}
+async function importarProductos() {
+  if (!(await asegurarOneDrive())) return;
+  let filas;
+  try {
+    const buf = await ALM.leerRuta(RUTA_PRODUCTOS);
+    const wb = XLSX.read(buf, { type: 'array' });
+    filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+  } catch (e) { toast('No encuentro ' + RUTA_PRODUCTOS + ' dentro de ' + ALM.nombreRaiz() + ': ' + (e.message || e), true); return; }
+  const nuevos = FERT.productosDesdeFilas(filas, uid);
+  const hab = FERT.tanquesHabituales(db);
+  let alta = 0, act = 0;
+  commit((d) => {
+    const porNom = new Map(d.productos.map((x) => [CALC.norm(x.nombre), x]));
+    for (const n of nuevos) {
+      const ya = porNom.get(CALC.norm(n.nombre));
+      if (ya) { ya.riq = n.riq; ya.densidad = n.densidad; if (n.notas && !ya.notas) ya.notas = n.notas; act++; continue; }
+      const t = hab.get(CALC.norm(n.nombre)); if (t) n.tanque = t;
+      if (IX) { const r = MX.buscarProducto(IX, n.nombre); if (r) n.mxId = r.p.id; }
+      d.productos.push(n); alta++;
+    }
+    asegurarFert(d);
+  });
+  toast(`${plural(alta, 'producto nuevo', 'productos nuevos')}${act ? `, ${act} actualizados` : ''}`);
+}
+function editarProducto(pr) {
+  const nuevo = !pr;
+  const x = pr ? structuredClone(pr) : { id: uid('pr'), nombre: '', riq: Object.fromEntries(FERT.RIQ.map((r) => [r, 0])), densidad: 1, tanque: '1', familia: 'bio', notas: '', mxId: null, activo: true };
+  const etiq = { n: 'N', p2o5: 'P2O5', k2o: 'K2O', cao: 'CaO', mgo: 'MgO', s: 'S (SO3)', fe: 'Fe', zn: 'Zn', mn: 'Mn', no3: 'N nítrico', nh4: 'N amoniacal' };
+  const mxOps = IX ? `<label class="fld" style="grid-column:span 2"><span>Maestro de productos</span><select data-pm="mxId"><option value="">— Sin enlazar —</option>${mxData.productos.filter((p) => /fertiliz|bioestim/i.test(p.categoria || '')).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map((p) => `<option value="${p.id}" ${p.id === x.mxId ? 'selected' : ''}>${esc(p.nombre)} (${p.id})</option>`).join('')}</select></label>` : '';
+  const m = modal(nuevo ? 'Nuevo producto' : x.nombre, `<div class="grid4">
+      <label class="fld" style="grid-column:span 2"><span>Nombre</span><input data-pm="nombre" value="${esc(x.nombre)}"></label>
+      <label class="fld"><span>Densidad (kg/L)</span><input data-pr="densidad" value="${fmtIn(x.densidad)}"></label>
+      <label class="fld"><span>Tanque habitual</span><select data-pm="tanque">${[['1', 'Tanque 1'], ['2', 'Tanque 2'], ['E', 'Especial (E)']].map(([v2, t]) => `<option value="${v2}" ${x.tanque === v2 ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label class="fld"><span>Familia (para los E)</span><select data-pm="familia">${[['micro', 'Quelatos y micro'], ['organico', 'Orgánicos'], ['bio', 'Bioestimulantes y otros']].map(([v2, t]) => `<option value="${v2}" ${x.familia === v2 ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      ${mxOps}
+      <label class="fld"><span>Activo</span><span class="chk"><input type="checkbox" data-pm="activo" ${x.activo !== false ? 'checked' : ''}> Sale en las listas</span></label></div>
+    <h3 style="margin-top:14px">Riquezas (%)</h3><div class="grid4">${FERT.RIQ.map((r) => `<label class="fld"><span>${etiq[r]}</span><input data-pq="${r}" value="${fmtIn(x.riq[r] || '')}" placeholder="0"></label>`).join('')}</div>
+    <label class="fld" style="margin-top:12px"><span>Notas (modo de uso)</span><input data-pm="notas" value="${esc(x.notas || '')}"></label>
+    ${nuevo ? '' : `<p class="small muted" style="margin-top:10px">Se usa en ${plural(usosProducto(pr), 'línea', 'líneas')} de los planes.</p>`}`,
+  { pie: `${!nuevo ? '<button class="btn rojo" id="pmDel">Borrar</button><span class="spacer"></span>' : ''}<button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="pmOk">Guardar</button>` });
+  $$('[data-cerrar]', m).forEach((b) => { b.onclick = cerrarModal; });
+  $('#pmOk', m).onclick = () => {
+    $$('[data-pm]', m).forEach((i) => { x[i.dataset.pm] = i.type === 'checkbox' ? i.checked : i.value.trim(); });
+    x.mxId = x.mxId || null; x.densidad = CALC.num($('[data-pr="densidad"]', m).value) || 1;
+    $$('[data-pq]', m).forEach((i) => { x.riq[i.dataset.pq] = CALC.num(i.value) || 0; });
+    if (!x.nombre) { toast('Pon el nombre', true); return; }
+    commit((d) => { const k = d.productos.findIndex((y) => y.id === x.id); if (k >= 0) d.productos[k] = x; else d.productos.push(x); asegurarFert(d); });
+    cerrarModal(); toast('Producto guardado');
+  };
+  const del = $('#pmDel', m);
+  if (del) del.onclick = () => {
+    const n = usosProducto(pr);
+    if (n && !confirm(`Se usa en ${plural(n, 'línea', 'líneas')}: se quedarán sin producto. Mejor márcalo como inactivo. ¿Borrarlo igualmente?`)) return;
+    if (!n && !confirm('¿Borrar este producto?')) return;
+    commit((d) => { d.productos = d.productos.filter((y) => y.id !== pr.id); for (const p of d.planes) for (const c of Object.values(p.campanas || {})) for (const mm of Object.values(c.fert || {})) for (const l of (mm && mm.lineas) || []) if (l.prodId === pr.id) l.prodId = null; });
+    cerrarModal();
+  };
 }
 
 /* ---------- Nuevo plan ---------- */
@@ -1144,7 +1357,7 @@ async function abrirImportar() {
       if (i % 4 === 3) await new Promise((r) => setTimeout(r, 0));
     }
     let res;
-    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; IMP.asegurarRepartos(d); });
+    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; IMP.asegurarRepartos(d); asegurarFert(d); });
     const camps = campanas(); if (!camps.includes(ui.camp)) ui.camp = camps.slice(-1)[0];
     const plantillas = db.analiticas.filter((a) => a.plantilla);
     $('.cuerpo', m).innerHTML = `<h3>Importación terminada</h3><ul>

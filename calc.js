@@ -215,7 +215,8 @@
     const entradas = E1 + E2 + E3 + E4;
     const aporte = Math.max(0, S1 - entradas);
     const nOrgTotal = est.reduce((t, e) => t + e.nTotal, 0);
-    const nAplicado = (camp.ufAplicadas || []).reduce((t, m) => t + n0(m && m[0]), 0);
+    const ufs = (cfg.ufDe && cfg.ufDe(plan, camp)) || camp.ufAplicadas || [];
+    const nAplicado = ufs.reduce((t, m) => t + n0(m && m[0]), 0);
     return {
       modo, no3s, fa, fb, hum, E1, E2, E3, E4, est, dosisRiego, dosisRiegoAuto: rg.totApl, no3w, prod, coef, S1, entradas, aporte, aporteBruto: S1 - entradas,
       nOrgTotal, nAplicado, excede: nAplicado > aporte + 0.05 && nAplicado > 0, excedeOrg: plan.vulnerable && nOrgTotal > T.limiteNOrganico
@@ -264,7 +265,7 @@
     if (objetivo[0] != null && b.prod && b.coef && objetivo[0] > b.aporte) { objetivo[0] = b.aporte; limitadoN = true; }
     const suma = sumaReparto(rep);
     const mensual = rep && rep.pct ? MESES.map((_, i) => NUTRIENTES.map((__, j) => (objetivo[j] == null ? 0 : objetivo[j] * n0(rep.pct[i] && rep.pct[i][j]) / 100))) : null;
-    const plan12 = (camp.ufAplicadas || []).map((m) => NUTRIENTES.map((_, j) => n0(m && m[j])));
+    const plan12 = ((cfg.ufDe && cfg.ufDe(plan, camp)) || camp.ufAplicadas || []).map((m) => NUTRIENTES.map((_, j) => n0(m && m[j])));
     return { b, teor, estiercol: estA, agua, factor, neto, objetivo, limitadoN, nBalance: b.aporte, suma, repartoOk: !!rep && suma.every((x) => Math.abs(x - 100) < 0.05), mensual, plan12 };
   }
 

@@ -134,6 +134,13 @@
     out.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es'));
     return out;
   }
+  /* Lee un archivo por su ruta dentro de la carpeta elegida («Cuaderno de campo/…/x.xlsx») */
+  async function leerRuta(ruta) {
+    const ps = ruta.split('/'); const nombre = ps.pop();
+    const d = await subdir(raiz, ps.join('/'), false);
+    const f = await (await d.getFileHandle(nombre)).getFile();
+    return f.arrayBuffer();
+  }
   async function leerArchivo(h) { const f = await h.getFile(); return { buf: await f.arrayBuffer(), mod: f.lastModified }; }
 
   /* Guarda un PDF en Clientes/<carpeta>/Planes de abonado/<nombre>. Devuelve la ruta. */
@@ -168,5 +175,5 @@
     await escribir(d, ext === 'png' ? 'logo.png' : 'logo.jpg', blob);
   }
 
-  root.ALM = { CARPETA_APP, soportado, iniciar, reconectar, elegirCarpeta, nombreRaiz, cargar, guardar, cambiadoFuera, cache, marcarUso, usoOtro, listarExcels, leerArchivo, guardarPDF, existeCarpetaCliente, logo, guardarLogo, kvGet, kvSet };
+  root.ALM = { CARPETA_APP, soportado, iniciar, reconectar, elegirCarpeta, nombreRaiz, cargar, guardar, cambiadoFuera, cache, marcarUso, usoOtro, listarExcels, leerArchivo, leerRuta, guardarPDF, existeCarpetaCliente, logo, guardarLogo, kvGet, kvSet };
 })(typeof window !== 'undefined' ? window : globalThis);

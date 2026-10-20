@@ -212,3 +212,18 @@ code { font-family: var(--mono); font-size: 12px; background: var(--chip); paddi
 .gr-ley i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 .gr-ley i.gr-ley-marca { height: 3px; border-radius: 2px; background: var(--gr-marca); }
 .gr-tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--card); font-size: 12px; padding: 5px 9px; border-radius: 8px; white-space: nowrap; z-index: 5; }
+
+/* Fertirrigación del mes */
+.meses { display: flex; gap: 4px; flex-wrap: wrap; }
+.mes-chip { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 5px 10px; font-size: 13px; position: relative; min-width: 46px; }
+.mes-chip.on { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+.mes-chip i { position: absolute; top: 3px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--s3, #1baf7a); }
+.tanques { display: flex; flex-direction: column; gap: 6px; }
+.tanque { background: var(--bg); border-radius: 10px; padding: 7px 10px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.tanque b { font-size: 12px; color: var(--brand); }
+table.fert td { padding: 4px 4px; }
+table.fert select.cell { min-width: 78px; padding: 4px 4px; }
+table.fert select.cell[data-c="prodId"] { min-width: 190px; }
+table.fert select.cell[data-c="tanque"] { min-width: 92px; }
+table.fert input.cell[data-c="periodo"] { min-width: 110px; }
+table.fert td.n { white-space: nowrap; }
