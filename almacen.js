@@ -1,5 +1,7 @@
 'use strict';
-/* Planes de abonado · FG Agro — almacén de datos en una carpeta de OneDrive.
+/* Planes de abonado · FG Agro — carpeta de OneDrive en el ordenador (desde la versión 1.1 los datos van a Drive: ver nube.js).
+   Aquí: importar los Excels, guardar los PDF en la carpeta de cada cliente y leer los datos de la versión 1.0.
+   Versión 1.0 (antigua): almacén de datos en una carpeta de OneDrive.
    El usuario elige una vez la carpeta «Asesoramiento agrícola». Dentro, la app usa:
      _App planes de abonado/datos.json        → todos los datos (la fuente de verdad)
      _App planes de abonado/copias/…json      → una copia por día
@@ -20,7 +22,9 @@
   async function kvGet(k) { const d = await idb(); return new Promise((ok, ko) => { const t = d.transaction(STORE).objectStore(STORE).get(k); t.onsuccess = () => ok(t.result); t.onerror = () => ko(t.error); }); }
   async function kvSet(k, v) { const d = await idb(); return new Promise((ok, ko) => { const t = d.transaction(STORE, 'readwrite'); t.objectStore(STORE).put(v, k); t.oncomplete = () => ok(); t.onerror = () => ko(t.error); }); }
 
-  const soportado = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+  // Solo en el ordenador: en tablets y móviles OneDrive no tiene una carpeta sincronizada que se pueda elegir
+  const movil = () => typeof navigator !== 'undefined' && (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1));
+  const soportado = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window && !movil();
 
   let raiz = null;        // handle de «Asesoramiento agrícola»
   let ultimaLectura = 0;  // lastModified de datos.json cuando lo leímos o escribimos

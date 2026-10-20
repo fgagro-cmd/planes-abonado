@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -27,8 +27,9 @@ function haceTxt(iso) {
 let db = null;
 let ui = { vista: 'planes', planId: null, tab: 'finca', q: '', filtro: 'todos', camp: null, analTipo: 'todas' };
 let local = { equipo: '' };
-let conn = 'iniciando'; // no-soportado | sin-carpeta | pedir-permiso | listo
+let conn = 'iniciando'; // sin-nube | error | listo
 let dirty = false, guardando = false, saveTimer = null, ultimoGuardado = null, errorGuardar = '';
+let versionNube = 0, offline = false, od = 'no-disponible'; // od: estado de la carpeta de OneDrive en este equipo
 let logoCache = null;
 let mxData = null, IX = null;
 
@@ -60,44 +61,54 @@ function campanas() {
   return [...s].sort();
 }
 
-/* ---------- Guardar ---------- */
+/* ---------- Guardar (Drive, con copia local) ---------- */
 function commit(fn, { render = true } = {}) {
   fn(db);
   dirty = true; errorGuardar = '';
-  clearTimeout(saveTimer); saveTimer = setTimeout(guardarAhora, 1200);
+  NUBE.guardarLocal({ db, version: versionNube, dirty: true });
+  clearTimeout(saveTimer); saveTimer = setTimeout(guardarAhora, 1500);
   if (render) renderAll(); else renderEstado();
 }
 async function guardarAhora(forzar = false) {
   if (!dirty || guardando || conn !== 'listo') return;
   guardando = true; renderEstado();
   try {
-    db.guardado = { fecha: new Date().toISOString(), equipo: local.equipo || 'Este ordenador', version: APP_VERSION };
-    await ALM.guardar(db, { forzar });
-    dirty = false; ultimoGuardado = db.guardado.fecha; ocultarBanner();
+    db.guardado = { fecha: new Date().toISOString(), equipo: local.equipo || 'Este equipo', version: APP_VERSION };
+    versionNube = await NUBE.guardar(db, versionNube, local.equipo || 'Este equipo', forzar);
+    dirty = false; offline = false; ultimoGuardado = db.guardado.fecha;
+    await NUBE.guardarLocal({ db, version: versionNube, dirty: false });
+    ocultarBanner();
   } catch (e) {
-    if (e.code === 'conflicto') mostrarConflicto();
-    else { errorGuardar = e.message || String(e); toast('No se pudo guardar: ' + errorGuardar, true); }
+    if (e.code === 'conflicto') mostrarConflicto(e.guardado);
+    else if (e.code === 'offline') offline = true;
+    else { errorGuardar = e.message || String(e); toast('No se pudo guardar en Drive: ' + errorGuardar, true); }
   } finally { guardando = false; renderEstado(); }
 }
-function mostrarConflicto() {
-  banner(`<b>El otro ordenador ha guardado cambios</b> mientras tenías la app abierta. <span class="muted">Si guardas lo tuyo, se pierde lo que hizo el otro.</span>
+function mostrarConflicto(g) {
+  const quien = g && g.equipo ? `<b>${esc(g.equipo)}</b>` : 'otro equipo';
+  banner(`<b>Cambios en otro equipo:</b>&nbsp;${quien} guardó${g && g.fecha ? ' ' + haceTxt(g.fecha) : ''} mientras tú tenías cambios sin subir. <span class="muted">Si guardas lo tuyo, se pierde lo que hizo el otro.</span>
     <span class="spacer"></span><button class="btn peq" id="bnRecargar">Cargar lo del otro (pierdo lo último mío)</button><button class="btn peq rojo" id="bnForzar">Guardar lo mío encima</button>`, true);
-  $('#bnRecargar').onclick = async () => { dirty = false; await recargar(); ocultarBanner(); toast('Datos cargados del otro ordenador'); };
+  $('#bnRecargar').onclick = async () => { dirty = false; await recargar(); ocultarBanner(); toast('Datos cargados del otro equipo'); };
   $('#bnForzar').onclick = async () => { await guardarAhora(true); };
 }
 async function recargar() {
-  const d = await ALM.cargar();
-  db = migrar(d || dbVacia());
-  if (!ui.camp || !campanas().includes(ui.camp)) ui.camp = campanas().slice(-1)[0] || String(new Date().getFullYear());
-  renderAll();
+  const r = await NUBE.leer();
+  if (r.datos) db = migrar(r.datos);
+  versionNube = r.version; dirty = false; offline = false;
+  ultimoGuardado = r.guardado && r.guardado.fecha;
+  await NUBE.guardarLocal({ db, version: versionNube, dirty: false });
+  prepararVista(); renderAll();
+}
+async function comprobarCambios() {
+  if (conn !== 'listo' || guardando) return;
+  if (dirty) { guardarAhora(); return; }
+  try { const v = await NUBE.version(); offline = false; if (v !== versionNube) { await recargar(); toast('Datos actualizados desde otro equipo'); } }
+  catch (e) { if (e.code === 'offline') offline = true; }
+  renderEstado();
 }
 window.addEventListener('beforeunload', (e) => { if (dirty) { guardarAhora(); e.preventDefault(); e.returnValue = ''; } });
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || conn !== 'listo') return;
-  try {
-    if (await ALM.cambiadoFuera()) { if (dirty) mostrarConflicto(); else { await recargar(); toast('Datos actualizados desde el otro ordenador'); } }
-  } catch (_) { /* sin acceso */ }
-});
+window.addEventListener('online', () => { offline = false; comprobarCambios(); procesarPendientes(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { comprobarCambios(); procesarPendientes(); } });
 
 /* ---------- Avisos, toast, banner, modal ---------- */
 let toastT = null;
@@ -123,40 +134,107 @@ async function arrancar() {
   $('#version').textContent = 'Versión ' + APP_VERSION;
   local.equipo = (await ALM.kvGet('equipo').catch(() => '')) || '';
   mxData = await ALM.kvGet('mxData').catch(() => null);
-  conn = await ALM.iniciar();
-  if (conn === 'listo') await abrir(); else renderAll();
+  if (mxData) IX = MX.indexar(mxData);
+  await NUBE.cargarCfg();
+  od = ALM.soportado() ? await ALM.iniciar() : 'no-disponible';
+  if (od === 'no-soportado') od = 'no-disponible';
+  if (!NUBE.conectada()) { conn = 'sin-nube'; renderAll(); }
+  else await abrir();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (!window.__reloj) window.__reloj = setInterval(() => { comprobarCambios(); }, 90000);
+}
+function prepararVista() {
+  if (!db) return;
+  if (!ui.camp || !campanas().includes(ui.camp)) ui.camp = campanas().slice(-1)[0] || String(new Date().getFullYear());
+  logoCache = db.config.logo || logoCache;
 }
 async function abrir() {
+  const loc = await NUBE.local();
+  if (loc && loc.db) { db = migrar(loc.db); versionNube = loc.version || 0; dirty = !!loc.dirty; conn = 'listo'; prepararVista(); renderAll(); }
   try {
-    const d = await ALM.cargar();
-    db = migrar(d || dbVacia());
-    ultimoGuardado = db.guardado && db.guardado.fecha;
+    const r = await NUBE.leer(); offline = false;
+    if (dirty && db) {
+      if (r.version === versionNube) await guardarAhora(); else mostrarConflicto(r.guardado);
+    } else {
+      db = migrar(r.datos || (db && !r.datos && versionNube === 0 ? db : dbVacia()));
+      versionNube = r.version; ultimoGuardado = r.guardado && r.guardado.fecha;
+      await NUBE.guardarLocal({ db, version: versionNube, dirty: false });
+    }
     conn = 'listo';
-    ui.camp = campanas().slice(-1)[0] || String(new Date().getFullYear());
-    if (mxData) IX = MX.indexar(mxData);
-    logoCache = await ALM.logo();
-    const otro = await ALM.usoOtro(local.equipo);
-    if (otro) banner(`<b>Ojo:</b> la app parece abierta en <b>${esc(otro.equipo)}</b> (${haceTxt(otro.latido)}). Trabaja en un solo ordenador a la vez para no pisar cambios.`);
-    ALM.marcarUso(local.equipo || 'Este ordenador');
-    if (!window.__latido) window.__latido = setInterval(() => { if (conn === 'listo') ALM.marcarUso(local.equipo || 'Este ordenador'); }, 60000);
   } catch (e) {
-    conn = 'error'; errorGuardar = e.message || String(e);
+    if (e.code === 'offline' && db) { offline = true; toast('Sin conexión: trabajas con la copia de este equipo y se subirá al volver'); }
+    else if (!db) { conn = 'error'; errorGuardar = e.message || String(e); }
+    else toast(e.message || String(e), true);
   }
-  renderAll();
+  if (!logoCache && od === 'listo') logoCache = await ALM.logo();
+  if (logoCache && db && conn === 'listo' && !db.config.logo) commit((d) => { d.config.logo = logoCache; }, { render: false });
+  prepararVista(); renderAll();
+  procesarPendientes();
+}
+
+/* ---------- OneDrive (solo en el ordenador): Excels y PDF ---------- */
+async function conectarOneDrive() {
+  try {
+    if (od === 'pedir-permiso') { if (!(await ALM.reconectar())) { toast('Sin permiso no se puede usar OneDrive', true); return false; } }
+    else if (od === 'sin-carpeta' || od === 'listo') {
+      const r = await ALM.elegirCarpeta();
+      if (!r.tieneClientes && !confirm(`La carpeta «${r.nombre}» no tiene dentro una carpeta «Clientes». ¿Usarla igualmente?`)) return false;
+    } else { toast('En este equipo no se puede usar la carpeta de OneDrive', true); return false; }
+    od = 'listo'; ocultarBanner();
+    if (!logoCache) logoCache = await ALM.logo();
+    renderAll(); procesarPendientes();
+    return true;
+  } catch (e) { if (e.name !== 'AbortError') toast(e.message || String(e), true); return false; }
+}
+async function asegurarOneDrive() { return od === 'listo' ? true : conectarOneDrive(); }
+function pendientesOneDrive() {
+  let n = 0;
+  for (const p of (db && db.planes) || []) for (const c of Object.values(p.campanas || {})) for (const x of Object.values(c.pdf || {})) if (x && x.pendiente) n++;
+  return n;
+}
+function bannerOneDrive() {
+  const n = pendientesOneDrive();
+  banner(`Hay ${plural(n, 'PDF hecho', 'PDF hechos')} en la tablet pendientes de pasar a OneDrive.<span class="spacer"></span><button class="btn peq" id="bnOd">Conectar OneDrive y pasarlos</button>`);
+  $('#bnOd').onclick = () => conectarOneDrive();
+}
+let pasandoPdf = false;
+async function procesarPendientes() {
+  if (od !== 'listo' || conn !== 'listo' || pasandoPdf || offline) return;
+  pasandoPdf = true;
+  try {
+    const lista = await NUBE.pdfs();
+    let n = 0;
+    for (const x of lista) {
+      const m = x.meta || {};
+      const blob = await NUBE.leerPdf(x.id);
+      const ruta = await ALM.guardarPDF(m.carpeta || 'Sin carpeta', x.nombre, blob);
+      await NUBE.borrarPdf(x.id);
+      commit((d) => {
+        const p = d.planes.find((q) => q.id === m.planId);
+        const reg = p && p.campanas && p.campanas[m.camp] && p.campanas[m.camp].pdf && p.campanas[m.camp].pdf[m.modo];
+        if (reg && reg.pendiente && (!reg.pdfId || reg.pdfId === x.id)) { reg.pendiente = false; reg.ruta = ruta; }
+      }, { render: false });
+      n++;
+    }
+    if (n) { toast(`${plural(n, 'PDF pasado', 'PDF pasados')} a OneDrive`); renderAll(); }
+  } catch (e) { if (e.code !== 'offline') toast('No se pudieron pasar los PDF a OneDrive: ' + (e.message || e), true); }
+  finally { pasandoPdf = false; }
 }
 
 /* ---------- Pintar ---------- */
 function renderEstado() {
   const b = $('#estado');
-  if (conn !== 'listo') { b.textContent = conn === 'no-soportado' ? 'Navegador no compatible' : 'Sin carpeta de datos'; b.className = 'estado mal'; return; }
-  let t = `OneDrive · ${ALM.nombreRaiz()}`;
+  if (conn !== 'listo') { b.textContent = conn === 'error' ? 'Sin acceso a Drive' : 'Sin conectar'; b.className = 'estado mal'; return; }
+  let t = 'Drive';
   if (guardando) t += ' · guardando…';
+  else if (offline) t += dirty ? ' · SIN CONEXIÓN · cambios pendientes de subir' : ' · sin conexión';
   else if (errorGuardar) t += ' · ERROR al guardar';
   else if (dirty) t += ' · cambios sin guardar';
   else if (ultimoGuardado) t += ` · guardado ${haceTxt(ultimoGuardado)}`;
+  if (od === 'listo') t += ' · OneDrive ✓'; else if (od === 'pedir-permiso' || od === 'sin-carpeta') t += ' · OneDrive sin conectar';
+  const pend = pendientesOneDrive(); if (pend) t += ` · ${pend} PDF pendientes`;
   if (local.equipo) t += ` · ${local.equipo}`;
-  b.textContent = t; b.className = 'estado' + (errorGuardar ? ' mal' : '');
+  b.textContent = t; b.className = 'estado' + (errorGuardar || (offline && dirty) ? ' mal' : '');
   b.onclick = () => { ui.vista = 'ajustes'; renderAll(); };
 }
 function renderAll() {
@@ -176,43 +254,52 @@ function renderAll() {
   $$('.nav').forEach((b) => { b.setAttribute('aria-current', b.dataset.vista === ui.vista ? 'page' : 'false'); b.onclick = () => { ui.vista = b.dataset.vista; renderAll(); }; });
   const v = $('#view');
   if (!listo) { v.innerHTML = pantallaConexion(); enlazarConexion(); return; }
+  if (ui.vista !== 'ajustes' && od === 'pedir-permiso' && pendientesOneDrive() && $('#banner').hidden) bannerOneDrive();
   if (ui.vista === 'planes') renderPlanes(v);
   else if (ui.vista === 'analiticas') renderAnaliticas(v);
   else if (ui.vista === 'avisos') renderAvisos(v);
   else renderAjustes(v);
 }
 
-/* ---------- Conexión con la carpeta ---------- */
+/* ---------- Conexión con Drive ---------- */
 function pantallaConexion() {
-  if (conn === 'no-soportado') return `<div class="card vacio"><h2>Abre la app con Edge o Chrome</h2><p>Para guardar los datos y los PDF en tu OneDrive, la app necesita Microsoft Edge o Google Chrome en el ordenador.</p></div>`;
-  if (conn === 'error') return `<div class="card vacio"><h2>No se pudo leer la carpeta de datos</h2><p>${esc(errorGuardar)}</p><button class="btn p" id="cxElegir">Elegir otra vez la carpeta</button></div>`;
-  if (conn === 'pedir-permiso') return `<div class="card vacio"><h2>Conectar con OneDrive</h2><p>Por seguridad, el navegador pide permiso cada vez que abres la app para usar la carpeta <b>${esc(ALM.nombreRaiz())}</b>.</p><button class="btn p" id="cxPermiso">Permitir el acceso</button><p class="small" style="margin-top:14px"><button class="link" id="cxElegir">Usar otra carpeta</button></p></div>`;
-  return `<div class="card vacio"><h2>Elige tu carpeta «Asesoramiento agrícola»</h2>
-    <p>Es la carpeta de OneDrive que tiene dentro <b>Clientes</b>. La app guardará sus datos en una subcarpeta nueva <code>${ALM.CARPETA_APP}</code> y los PDF en la carpeta de cada cliente y finca. Así los dos ordenadores ven lo mismo.</p>
-    <label class="fld" style="max-width:320px;margin:0 auto 16px;text-align:left"><span>Nombre de este ordenador</span><input id="cxEquipo" placeholder="p. ej. Oficina o Casa" value="${esc(local.equipo)}"></label>
-    <button class="btn p" id="cxElegir">Elegir carpeta</button></div>`;
+  const c = NUBE.config();
+  const err = conn === 'error' ? `<div class="aviso alto" style="margin-bottom:12px;text-align:left">No se pudo leer Drive: ${esc(errorGuardar)}</div>` : '';
+  return `<div class="card vacio" style="max-width:640px;margin:20px auto;text-align:left"><h2>Conectar con Google Drive</h2>
+    <p style="margin:0 0 14px">Los datos se guardan en Drive › Apps › Planes de abonado, para usarlos igual en los ordenadores y en la tablet. Pega la dirección del script de la hoja «Planes de abonado» (termina en <code>/exec</code>) y su clave.</p>${err}
+    <div class="grid2"><label class="fld" style="grid-column:span 2"><span>Dirección del script</span><input id="cxUrl" value="${esc(c.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>
+    <label class="fld"><span>Clave</span><input id="cxClave" type="password" value="${esc(c.clave)}"></label>
+    <label class="fld"><span>Nombre de este equipo</span><input id="cxEquipo" placeholder="Oficina, Casa, Tablet…" value="${esc(local.equipo)}"></label></div>
+    <div class="row" style="margin-top:16px"><button class="btn p" id="cxOk">Conectar</button></div></div>`;
 }
 function enlazarConexion() {
-  const eq = $('#cxEquipo'); if (eq) eq.onchange = () => { local.equipo = eq.value.trim(); ALM.kvSet('equipo', local.equipo); };
-  const el = $('#cxElegir');
-  if (el) el.onclick = async () => {
-    if (eq) { local.equipo = eq.value.trim(); await ALM.kvSet('equipo', local.equipo); }
+  const ok = $('#cxOk'); if (!ok) return;
+  ok.onclick = async () => {
+    const url = $('#cxUrl').value.trim(), clave = $('#cxClave').value.trim();
+    local.equipo = $('#cxEquipo').value.trim(); await ALM.kvSet('equipo', local.equipo);
+    if (!/^https:\/\/script\.google\.com\//.test(url)) { toast('La dirección debe empezar por https://script.google.com/', true); return; }
+    if (!clave) { toast('Escribe la clave', true); return; }
+    ok.disabled = true; ok.textContent = 'Conectando…';
     try {
-      const r = await ALM.elegirCarpeta();
-      if (!r.tieneClientes && !confirm(`La carpeta «${r.nombre}» no tiene dentro una carpeta «Clientes». ¿Usarla igualmente?`)) return;
+      const r = await NUBE.probar({ url, clave });
+      if (!r.ok) throw new Error(r.error || 'El script no responde');
+      await NUBE.guardarCfg({ url, clave });
       await abrir();
-    } catch (e) { if (e.name !== 'AbortError') toast(e.message || String(e), true); }
+      toast('Conectado con Drive');
+    } catch (e) { toast(e.message || String(e), true); ok.disabled = false; ok.textContent = 'Conectar'; }
   };
-  const pe = $('#cxPermiso');
-  if (pe) pe.onclick = async () => { if (await ALM.reconectar()) await abrir(); else toast('Sin permiso no se pueden leer los datos', true); };
 }
 
 /* ---------- PLANES ---------- */
 function renderPlanes(v) {
   if (!db.planes.length) {
-    v.innerHTML = `<div class="card vacio"><h2>Todavía no hay planes</h2><p>Importa tus Excels «Gestion Fertirrigacion v5» de la carpeta Clientes. La app lee las analíticas, el riego y el balance de N de cada uno, sin tocarlos.</p>
-      <div class="row" style="justify-content:center"><button class="btn p" id="vImp">Importar mis Excels</button><button class="btn" id="vNuevo">Crear un plan a mano</button></div></div>`;
-    $('#vImp').onclick = abrirImportar; $('#vNuevo').onclick = nuevoPlan; return;
+    const pc = od !== 'no-disponible';
+    v.innerHTML = `<div class="card vacio"><h2>Todavía no hay planes</h2>
+      ${pc ? `<p>Importa tus Excels «Gestion Fertirrigacion v5» de la carpeta Clientes de OneDrive. La app lee las analíticas, el riego y el balance de N de cada uno, sin tocarlos.</p>
+      <div class="row" style="justify-content:center"><button class="btn p" id="vImp">Importar mis Excels</button><button class="btn" id="vV10">Traer los datos de la versión 1.0</button><button class="btn" id="vNuevo">Crear un plan a mano</button></div>`
+      : `<p>Importa los Excels desde el ordenador (Ajustes → Importar los Excels). En cuanto termine, los planes aparecerán aquí.</p><div class="row" style="justify-content:center"><button class="btn" id="vRec">Volver a mirar</button><button class="btn" id="vNuevo">Crear un plan a mano</button></div>`}</div>`;
+    if (pc) { $('#vImp').onclick = abrirImportar; $('#vV10').onclick = traerV10; } else $('#vRec').onclick = () => recargar();
+    $('#vNuevo').onclick = nuevoPlan; return;
   }
   const q = CALC.norm(ui.q);
   const conAv = db.planes.map((p) => ({ p, av: avisosDe(p) }));
@@ -404,7 +491,7 @@ function tabFinca(el, p) {
   };
   const fa = $('#fAuto', el);
   if (fa) fa.onclick = () => { const r = enlazarPlan(p, true); commit(() => {}, { render: false }); renderDetalleSoloCuerpo(); toast(r ? 'Enlazado con ' + r : 'No se encontró por nombre: elígelo en la lista', !r); };
-  ALM.existeCarpetaCliente(p.carpeta).then((ok) => { const s = $('#fCarp'); if (s && !ok) s.innerHTML += ' <span class="chip amb">esa carpeta no existe: se creará con el primer PDF</span>'; });
+  if (od === 'listo') ALM.existeCarpetaCliente(p.carpeta).then((ok) => { const s = $('#fCarp'); if (s && !ok) s.innerHTML += ' <span class="chip amb">esa carpeta no existe: se creará con el primer PDF</span>'; });
 }
 
 /* ----- Pestaña Analíticas del plan ----- */
@@ -620,9 +707,9 @@ function tabBalance(el, p, camp) {
       </div><p class="small muted">Déjalos vacíos para que se calculen solos. fB sale del marco (filas a más o menos de 5 m) y de las líneas de emisores (pestaña Finca).</p></details>
     <div class="grid2" style="margin-top:14px">
       <div><h3>Estimado · inicio de campaña</h3>${tablaBalance(bE)}
-        <div class="row" style="margin-top:10px"><button class="btn p" id="bPdfE">PDF estimado</button><span class="small muted">${pdfE ? `Último: ${fechaEs(pdfE.fecha)} · ${fmt(pdfE.aporte, 1)} kg N/ha` : 'Aún sin PDF'}</span></div></div>
+        <div class="row" style="margin-top:10px"><button class="btn p" id="bPdfE">PDF estimado</button><span class="small muted">${pdfE ? `Último: ${fechaEs(pdfE.fecha)} · ${fmt(pdfE.aporte, 1)} kg N/ha${pdfE.pendiente ? ' · pendiente de pasar a OneDrive' : ''}` : 'Aún sin PDF'}</span></div></div>
       <div><h3>Cerrado · fin de campaña</h3>${tablaBalance(bC)}
-        <div class="row" style="margin-top:10px"><button class="btn p" id="bPdfC">PDF cerrado</button><span class="small muted">${pdfC ? `Último: ${fechaEs(pdfC.fecha)}` : 'Aún sin PDF'}</span></div></div>
+        <div class="row" style="margin-top:10px"><button class="btn p" id="bPdfC">PDF cerrado</button><span class="small muted">${pdfC ? `Último: ${fechaEs(pdfC.fecha)}${pdfC.pendiente ? ' · pendiente de pasar a OneDrive' : ''}` : 'Aún sin PDF'}</span></div></div>
     </div>
     ${p.vulnerable ? `<div class="aviso ${bE.excedeOrg ? 'alto' : 'bajo'}" style="margin-top:12px">Zona vulnerable · N orgánico total aplicado: <b>${fmt(bE.nOrgTotal, 1)} kg N/ha</b> (límite ${fmt(cfg().tablas.limiteNOrganico, 0)}).</div>` : ''}
     <h3 style="margin-top:20px">N del plan de fertirrigación (kg UF/ha)</h3>
@@ -652,18 +739,52 @@ async function generarPDF(p, modo) {
   const est = camp.estiercoles || [];
   const ests = est.map((e) => A.estiercoles[e.analId]).filter(Boolean);
   const bEst = modo === 'cerrado' ? (camp.pdf && camp.pdf.estimado) || { ...CALC.balanceN(p, camp, A, 'estimado', cfg()), fecha: null } : null;
+  const campKey = ui.camp;
   try {
-    const blob = PDF.balance({ plan: p, campKey: ui.camp, b, bEst, anal: { suelo: A.suelo, agua: A.agua, estiercoles: ests }, logo: logoCache, autor: db.config.autor });
-    const nombre = `Balance N ${p.nombre} ${ui.camp} ${modo === 'cerrado' ? 'Cerrado' : 'Estimado'}.pdf`;
-    const ruta = await ALM.guardarPDF(p.carpeta || ((p.cliente || 'Sin cliente') + '/' + (p.finca || 'Sin finca')), nombre, blob);
-    commit(() => {
-      camp.pdf = camp.pdf || {};
-      camp.pdf[modo] = { fecha: new Date().toISOString(), ruta, aporte: b.aporte, dosisRiego: b.dosisRiego, prod: b.prod, entradas: b.entradas, nAplicado: b.nAplicado };
-    }, { render: false });
+    const blob = PDF.balance({ plan: p, campKey, b, bEst, anal: { suelo: A.suelo, agua: A.agua, estiercoles: ests }, logo: logoCache, autor: db.config.autor });
+    const nombre = `Balance N ${p.nombre} ${campKey} ${modo === 'cerrado' ? 'Cerrado' : 'Estimado'}.pdf`;
+    const carpeta = p.carpeta || ((p.cliente || 'Sin cliente') + '/' + (p.finca || 'Sin finca'));
+    const reg = { fecha: new Date().toISOString(), ruta: null, pendiente: false, aporte: b.aporte, dosisRiego: b.dosisRiego, prod: b.prod, entradas: b.entradas, nAplicado: b.nAplicado };
+    if (od === 'listo' || (od === 'pedir-permiso' && await ALM.reconectar().catch(() => false))) {
+      od = 'listo';
+      reg.ruta = await ALM.guardarPDF(carpeta, nombre, blob);
+      verPdf(blob, nombre);
+      toast('PDF guardado en ' + reg.ruta);
+    } else {
+      // Tablet (o sin OneDrive): se ve o se comparte ya, y queda en Drive hasta que el ordenador lo pase a OneDrive
+      verPdf(blob, nombre);
+      if (offline) { toast('Sin conexión: el PDF no se ha guardado en Drive. Vuelve a sacarlo con conexión.', true); return; }
+      reg.pendiente = true;
+      reg.pdfId = await NUBE.subirPdf(nombre, blob, { carpeta, planId: p.id, camp: campKey, modo });
+      toast('PDF listo. Se guardará en OneDrive la próxima vez que abras la app en el ordenador');
+    }
+    commit(() => { camp.pdf = camp.pdf || {}; camp.pdf[modo] = reg; }, { render: false });
     renderDetalleSoloCuerpo();
-    const url = URL.createObjectURL(blob); window.open(url, '_blank'); setTimeout(() => URL.revokeObjectURL(url), 60000);
-    toast('PDF guardado en ' + ruta);
   } catch (e) { toast('No se pudo crear el PDF: ' + (e.message || e), true); }
+}
+
+function verPdf(blob, nombre) {
+  try {
+    const file = new File([blob], nombre, { type: 'application/pdf' });
+    if (od === 'no-disponible' && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: nombre }).catch(() => {}); return; }
+  } catch (_) { /* sin compartir */ }
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if (!w) { const a = document.createElement('a'); a.href = url; a.download = nombre; a.click(); }
+  setTimeout(() => URL.revokeObjectURL(url), 120000);
+}
+
+/* Datos de la versión 1.0 (guardados en OneDrive) → Drive */
+async function traerV10() {
+  if (!(await asegurarOneDrive())) return;
+  let d;
+  try { d = await ALM.cargar(); } catch (e) { toast(e.message || String(e), true); return; }
+  if (!d || !d.planes) { toast('No hay datos de la versión 1.0 en esta carpeta', true); return; }
+  if (db.planes.length && !confirm(`Drive ya tiene ${db.planes.length} planes. ¿Sustituirlos por los ${d.planes.length} de la versión 1.0?`)) return;
+  const logo = await ALM.logo();
+  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; });
+  prepararVista(); renderAll();
+  toast(`${plural(d.planes.length, 'plan traído', 'planes traídos')} de la versión 1.0`);
 }
 
 /* ---------- Nuevo plan ---------- */
@@ -735,14 +856,15 @@ function renderAjustes(v) {
   const sinEnlace = db.planes.filter((p) => !p.mxFin).length;
   v.innerHTML = `<div class="grid2" style="align-items:start">
   <div>
-    <div class="card"><h3>Carpeta de datos</h3>
-      <p class="small">Carpeta: <b>${esc(ALM.nombreRaiz())}</b> → <code>${ALM.CARPETA_APP}/datos.json</code> (copia diaria en <code>copias</code>).</p>
-      <div class="grid2"><label class="fld"><span>Nombre de este ordenador</span><input id="aEq" value="${esc(local.equipo)}" placeholder="Oficina, Casa…"></label>
-      <div class="fld"><span>&nbsp;</span><button class="btn" id="aCarp">Cambiar de carpeta</button></div></div>
-      <p class="small muted">Guardado: ${db.guardado ? `${fechaEs(db.guardado.fecha)} ${new Date(db.guardado.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} desde ${esc(db.guardado.equipo)}` : 'aún no'}.</p></div>
-    <div class="card"><h3>Importar los Excels</h3>
-      <p class="small">Busca los <code>Gestion Fertirrigacion v5*.xlsm</code> en <b>Clientes</b> (sin ZZ_PAPELERA ni ZZ_Plantillas). Solo los lee: no cambia nada en ellos.</p>
-      <button class="btn p" id="aImp">Buscar e importar</button></div>
+    <div class="card"><h3>Datos en Google Drive</h3>
+      <p class="small">Drive › Apps › Planes de abonado → <code>datos.json</code> (copia diaria en <code>Copias</code>). ${offline ? '<span class="chip rojo">Sin conexión</span>' : '<span class="chip v">Conectado</span>'} ${dirty ? '<span class="chip amb">Cambios sin subir</span>' : ''}</p>
+      <div class="grid2"><label class="fld"><span>Nombre de este equipo</span><input id="aEq" value="${esc(local.equipo)}" placeholder="Oficina, Casa, Tablet…"></label>
+      <div class="fld"><span>&nbsp;</span><div class="row"><button class="btn" id="aRec">Recargar de Drive</button><button class="btn" id="aNube">Cambiar dirección o clave</button></div></div></div>
+      <p class="small muted">Último guardado: ${db.guardado ? `${fechaEs(db.guardado.fecha)} ${new Date(db.guardado.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} desde ${esc(db.guardado.equipo)}` : 'aún no'} · versión ${versionNube}.</p></div>
+    <div class="card"><h3>OneDrive (solo en el ordenador)</h3>
+      ${od === 'no-disponible' ? `<p class="small">En este equipo no se puede usar la carpeta de OneDrive. Los PDF que hagas aquí quedan en Drive y el ordenador los pasa solo a la carpeta de cada cliente. ${pendientesOneDrive() ? `<b>Pendientes ahora: ${pendientesOneDrive()}.</b>` : ''}</p>`
+      : `<p class="small">Carpeta <b>${esc(ALM.nombreRaiz() || '—')}</b> ${od === 'listo' ? '<span class="chip v">Conectada</span>' : '<span class="chip amb">Sin conectar</span>'}. Se usa para importar los Excels de <b>Clientes</b> y guardar los PDF en la carpeta de cada cliente y finca. ${pendientesOneDrive() ? `<b>PDF de la tablet pendientes: ${pendientesOneDrive()}.</b>` : ''}</p>
+      <div class="row"><button class="btn" id="aOd">${od === 'listo' ? 'Cambiar de carpeta' : od === 'pedir-permiso' ? 'Conectar' : 'Elegir carpeta Asesoramiento agrícola'}</button><button class="btn p" id="aImp">Importar los Excels</button><button class="btn" id="aV10">Traer datos de la versión 1.0</button></div>`}</div>
     <div class="card"><h3>Campañas</h3>
       <p class="small">Campañas con datos: ${cs.map(esc).join(', ') || '–'}. Al crear una nueva se copian de la anterior el riego, la producción y los ajustes; el N del plan y los estiércoles empiezan vacíos.</p>
       <button class="btn" id="aCamp">Crear la campaña ${sig} en todos los planes</button></div>
@@ -774,8 +896,9 @@ function renderAjustes(v) {
       <table class="t small" style="margin-top:8px"><tr><th>Extracción</th><th class="n">kg N/t</th></tr>${T.extraccion.map((e) => `<tr><td>${e.cultivo}</td><td class="n">${fmtIn(e.r[0])}-${fmtIn(e.r[1])}</td></tr>`).join('')}</table></div>
   </div></div>`;
   $('#aEq').onchange = (e) => { local.equipo = e.target.value.trim(); ALM.kvSet('equipo', local.equipo); renderEstado(); };
-  $('#aCarp').onclick = async () => { try { await guardarAhora(); await ALM.elegirCarpeta(); await abrir(); } catch (e) { if (e.name !== 'AbortError') toast(e.message, true); } };
-  $('#aImp').onclick = abrirImportar;
+  $('#aRec').onclick = async () => { if (dirty && !confirm('Tienes cambios sin subir. ¿Recargar igualmente y perderlos?')) return; try { await recargar(); toast('Datos recargados de Drive'); } catch (e) { toast(e.message || String(e), true); } };
+  $('#aNube').onclick = () => { conn = 'sin-nube'; renderAll(); };
+  if ($('#aOd')) { $('#aOd').onclick = async () => { if (od === 'listo') { od = 'sin-carpeta'; } await conectarOneDrive(); renderAll(); }; $('#aImp').onclick = abrirImportar; $('#aV10').onclick = traerV10; }
   $('#aCamp').onclick = () => {
     if (!confirm(`¿Crear la campaña ${sig} en los ${db.planes.length} planes?`)) return;
     let n = 0; commit(() => { for (const p of db.planes) if (crearCampana(p, sig)) n++; }); ui.camp = sig; renderAll(); toast(`Campaña ${sig} creada en ${plural(n, 'plan', 'planes')}`);
@@ -794,7 +917,7 @@ function renderAjustes(v) {
   };
   const enl = $('#aMxEnl');
   if (enl) enl.onclick = () => { let n = 0; commit((d) => { for (const p of d.planes) if (!p.mxFin && enlazarPlan(p, false)) n++; }); toast(`Enlazados ${plural(n, 'plan', 'planes')} más`); };
-  $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; await ALM.guardarLogo(f, /png$/i.test(f.type) ? 'png' : 'jpg'); logoCache = await ALM.logo(); renderAll(); toast('Logo guardado'); };
+  $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
   $('#aExp').onclick = () => { const b = new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `planes-abonado-copia-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
   $('#aRes').onchange = async (e) => {
@@ -836,6 +959,8 @@ function enlazarPlan(p, forzar) {
 
 /* ---------- Importar Excels ---------- */
 async function abrirImportar() {
+  if (od === 'no-disponible') { toast('Los Excels se importan desde el ordenador', true); return; }
+  if (!(await asegurarOneDrive())) return;
   const m = modal('Importar Excels de planes', '<p>Buscando Excels en <b>Clientes</b>… <span id="iCnt">0</span></p>', { ancho: true });
   let lista;
   try { lista = await ALM.listarExcels((n) => { const c = $('#iCnt'); if (c) c.textContent = n; }); }
@@ -867,7 +992,7 @@ async function abrirImportar() {
         const wb = XLSX.read(buf, { type: 'array', sheets: IMP.HOJAS, bookFiles: logoPend });
         if (logoPend && wb.files) {
           const jpgs = Object.keys(wb.files).filter((k) => /xl\/media\/.*\.jpe?g$/i.test(k)).sort((a, b) => wb.files[b].content.length - wb.files[a].content.length);
-          if (jpgs.length) { try { await ALM.guardarLogo(new Blob([wb.files[jpgs[0]].content], { type: 'image/jpeg' }), 'jpg'); logoCache = await ALM.logo(); } catch (_) { /* sin logo */ } }
+          if (jpgs.length) { try { const bl = new Blob([wb.files[jpgs[0]].content], { type: 'image/jpeg' }); logoCache = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(bl); }); } catch (_) { /* sin logo */ } }
           logoPend = false;
         }
         leidos.push(IMP.leerLibro(wb, x.ruta));
@@ -875,7 +1000,7 @@ async function abrirImportar() {
       if (i % 4 === 3) await new Promise((r) => setTimeout(r, 0));
     }
     let res;
-    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); });
+    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; });
     const camps = campanas(); if (!camps.includes(ui.camp)) ui.camp = camps.slice(-1)[0];
     const plantillas = db.analiticas.filter((a) => a.plantilla);
     $('.cuerpo', m).innerHTML = `<h3>Importación terminada</h3><ul>

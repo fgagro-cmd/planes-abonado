@@ -11,13 +11,21 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 
 Próximas fases: necesidades por cultivo y reparto mensual con gráfica (2), productos, dosis y tanques (3) e informe mensual por lotes (4).
 
-## Dónde están los datos
-En **OneDrive**, no en este repositorio (es público: aquí no hay datos de clientes).
-- `Asesoramiento agrícola/_App planes de abonado/datos.json` → todos los datos. Copia diaria en `copias/`.
-- `Asesoramiento agrícola/Clientes/<cliente>/<finca>/Planes de abonado/` → los PDF.
-- El logo del informe está en `_App planes de abonado/logo.jpg` (se toma del primer Excel al importar).
+## Dónde están los datos (desde la versión 1.1)
+En **Google Drive**, no en este repositorio (es público: aquí no hay datos de clientes).
+- Drive › Apps › Planes de abonado → hoja «Planes de abonado» con su script (`google-sheets/Codigo.gs`), `datos.json` con todos los datos y copia diaria en `Copias`. La pestaña «Registro» anota cada guardado.
+- Cada equipo guarda además una copia local para abrir al momento y trabajar sin conexión; lo cambiado sin conexión se sube al volver.
+- Si otro equipo guardó antes, la app avisa y deja elegir (cargar lo del otro o guardar lo propio encima).
 
-Trabaja en un solo ordenador a la vez. Si el otro ordenador guardó cambios mientras tenías la app abierta, la app avisa y te deja elegir.
+**OneDrive, solo en el ordenador** (Edge o Chrome en Windows): sirve para importar los Excels de `Clientes` y guardar los PDF en `Clientes/<cliente>/<finca>/Planes de abonado/`.
+**En la tablet** (Android o iPad) se trabaja igual; los PDF se ven o se comparten al momento y quedan en Drive › Apps › Planes de abonado › «PDF pendientes de OneDrive» hasta que el ordenador los pasa solo a la carpeta del cliente.
+
+## Puesta en marcha del script
+1. Abre la hoja **Planes de abonado** (Drive › Apps › Planes de abonado) → **Extensiones → Apps Script**.
+2. Borra lo que haya, pega `google-sheets/Codigo.gs` y cambia `CAMBIA-ESTA-CLAVE` por una clave tuya. Guarda.
+3. Arriba elige la función **autorizar** → **Ejecutar** → acepta los permisos.
+4. **Implementar → Nueva implementación** → tipo **Aplicación web** → Ejecutar como **Yo** → Quién tiene acceso **Cualquier usuario** → **Implementar**. Copia la dirección que termina en `/exec`.
+5. En la app: pega la dirección y la clave en «Conectar con Google Drive».
 
 ## Archivos
 | Archivo | Para qué |
@@ -25,11 +33,13 @@ Trabaja en un solo ordenador a la vez. Si el otro ordenador guardó cambios mien
 | `index.html`, `style.css`, `app.js` | La app |
 | `calc.js` | Cálculos: riego, balance de N, avisos y tablas de la pestaña 1 |
 | `importar.js` | Lectura de los Excels v5 |
-| `almacen.js` | Lectura y escritura en la carpeta de OneDrive |
+| `nube.js` | Datos en Google Drive (con copia local y sin conexión) |
+| `almacen.js` | Carpeta de OneDrive en el ordenador: Excels, PDF y datos de la versión 1.0 |
+| `google-sheets/Codigo.gs` | Script de la hoja «Planes de abonado» |
 | `pdf.js` | PDF del balance de N |
 | `maestros.js` | Enlace con los maestros (el mismo que en las otras apps) |
 | `sw.js`, `manifest.webmanifest`, `icons/` | Instalación y apertura sin conexión |
 | `vendor/` | SheetJS (leer Excel) y jsPDF + autoTable (PDF) |
 
 ## Actualizar la app
-Al cambiar cualquier archivo, sube `VERSION` en `sw.js` y `APP_VERSION` en `app.js`. Los datos están en OneDrive y no se tocan.
+Al cambiar cualquier archivo, sube `VERSION` en `sw.js` y `APP_VERSION` en `app.js`. Los datos están en Drive y no se tocan.

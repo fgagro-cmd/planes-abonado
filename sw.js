@@ -1,9 +1,9 @@
 // Service worker: la app abre sin conexión (caché primero, se actualiza en segundo plano).
 // Al cambiar cualquier fichero de la app, sube VERSION (y APP_VERSION en app.js).
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const CACHE = 'planes-abonado-' + VERSION;
 const ASSETS = [
-  './', 'index.html', 'style.css', 'app.js', 'calc.js', 'importar.js', 'almacen.js', 'pdf.js', 'maestros.js', 'manifest.webmanifest',
+  './', 'index.html', 'style.css', 'app.js', 'calc.js', 'importar.js', 'almacen.js', 'nube.js', 'pdf.js', 'maestros.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',
   'vendor/xlsx.mini.min.js', 'vendor/jspdf.umd.min.js', 'vendor/jspdf.plugin.autotable.min.js'
 ];
