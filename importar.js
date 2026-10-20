@@ -194,6 +194,56 @@
     return res;
   }
 
-  const api = { HOJAS, leerLibro, adivinarCultivo, juntar, claveAnal, hash, fecha };
+
+  /* ---------- Tipos de reparto mensual a partir de los Excels (fase 2) ----------
+     Cada patrón distinto de % mensuales de los Excels es un tipo. Id fijo según el patrón, para que
+     dos equipos que migran a la vez creen los mismos tipos. Devuelve true si ha cambiado algo. */
+  function nombreTipo(grupo, pct, usados) {
+    const N = pct.map((m) => m[0]), K = pct.map((m) => m[2]);
+    let n;
+    if (grupo === 'CITRICOS' || grupo === 'OLIVOS') n = 'Cítricos adultos';
+    else if (grupo === 'FRUTALES') n = N[1] > 0 ? (K[3] >= K[2] && K[3] >= 25 && K[1] >= 15 ? 'Frutales tempranos' : 'Frutales tempranos (variante)') : 'Frutales media estación';
+    else n = 'Tipo ' + C.norm(grupo);
+    let k = n, i = 2; while (usados.has(k)) k = n + ' ' + i++;
+    usados.add(k); return k;
+  }
+  function asegurarRepartos(db) {
+    let cambio = false;
+    if (!Array.isArray(db.repartos)) { db.repartos = []; cambio = true; }
+    const porClave = new Map(db.repartos.map((r) => [JSON.stringify(r.pct), r]));
+    const usados = new Set(db.repartos.map((r) => r.nombre));
+    // Patrones por frecuencia, para que el más usado se quede el nombre «limpio»
+    const cuenta = new Map();
+    for (const p of db.planes) {
+      if (p.reparto) continue;
+      const c = p.campanas && p.campanas[p.campanaActual];
+      const pct = c && c.excel && c.excel.reparto;
+      if (!pct || !pct.some((m) => m.some((x) => x))) continue;
+      const k = JSON.stringify(pct);
+      if (!cuenta.has(k)) cuenta.set(k, { n: 0, grupo: p.grupo, pct });
+      cuenta.get(k).n++;
+    }
+    for (const [k, x] of [...cuenta.entries()].sort((a, b) => b[1].n - a[1].n)) {
+      if (porClave.has(k)) continue;
+      const r = { id: 'r' + hash(k), nombre: nombreTipo(x.grupo, x.pct, usados), grupo: x.grupo, pct: x.pct.map((m) => m.slice()), notas: 'Creado a partir de los Excels' };
+      db.repartos.push(r); porClave.set(k, r); cambio = true;
+    }
+    for (const p of db.planes) {
+      const c = p.campanas && p.campanas[p.campanaActual];
+      if (!p.reparto) {
+        const pct = c && c.excel && c.excel.reparto;
+        const r = pct ? porClave.get(JSON.stringify(pct)) : null;
+        if (r) { p.reparto = r.id; cambio = true; }
+      }
+      // Necesidades y factores del Excel, si la campaña aún no los tiene
+      for (const camp of Object.values(p.campanas || {})) {
+        if (!camp.necesidades && camp.excel && camp.excel.necesidades) { camp.necesidades = camp.excel.necesidades.slice(); cambio = true; }
+        if (!camp.factores && camp.excel && camp.excel.factores) { camp.factores = camp.excel.factores.map((f) => (f == null ? 1 : f)); cambio = true; }
+      }
+    }
+    return cambio;
+  }
+
+  const api = { HOJAS, asegurarRepartos, leerLibro, adivinarCultivo, juntar, claveAnal, hash, fecha };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.IMP = api;
 })(typeof window !== 'undefined' ? window : globalThis);

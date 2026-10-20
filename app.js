@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -46,7 +46,7 @@ function migrar(d) {
   d.config.kc = { ...v.config.kc, ...(d.config.kc || {}) };
   d.config.antiguedad = { ...v.config.antiguedad, ...(d.config.antiguedad || {}) };
   d.config.mx = d.config.mx || { url: '', clave: '' };
-  d.planes = d.planes || []; d.analiticas = d.analiticas || [];
+  d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || [];
   return d;
 }
 const cfg = () => ({ eto: db.config.eto, kc: db.config.kc, tablas: { ...CALC.TABLAS, antiguedad: db.config.antiguedad, limiteNOrganico: +db.config.limiteNOrganico || 170 } });
@@ -97,7 +97,7 @@ async function recargar() {
   versionNube = r.version; dirty = false; offline = false;
   ultimoGuardado = r.guardado && r.guardado.fecha;
   await NUBE.guardarLocal({ db, version: versionNube, dirty: false });
-  prepararVista(); renderAll();
+  postCarga(); prepararVista(); renderAll();
 }
 async function comprobarCambios() {
   if (conn !== 'listo' || guardando) return;
@@ -143,6 +143,9 @@ async function arrancar() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!window.__reloj) window.__reloj = setInterval(() => { comprobarCambios(); }, 90000);
 }
+function postCarga() {
+  if (db && conn === 'listo' && IMP.asegurarRepartos(db)) commit(() => {}, { render: false });
+}
 function prepararVista() {
   if (!db) return;
   if (!ui.camp || !campanas().includes(ui.camp)) ui.camp = campanas().slice(-1)[0] || String(new Date().getFullYear());
@@ -159,6 +162,7 @@ async function abrir() {
       db = migrar(r.datos || (db && !r.datos && versionNube === 0 ? db : dbVacia()));
       versionNube = r.version; ultimoGuardado = r.guardado && r.guardado.fecha;
       await NUBE.guardarLocal({ db, version: versionNube, dirty: false });
+      conn = 'listo'; postCarga();
     }
     conn = 'listo';
   } catch (e) {
@@ -258,6 +262,7 @@ function renderAll() {
   if (ui.vista === 'planes') renderPlanes(v);
   else if (ui.vista === 'analiticas') renderAnaliticas(v);
   else if (ui.vista === 'avisos') renderAvisos(v);
+  else if (ui.vista === 'repartos') renderRepartos(v);
   else renderAjustes(v);
 }
 
@@ -345,7 +350,7 @@ function renderDetalle(el) {
       <div class="kpi ${av.some((a) => a.nivel === 'alto') ? 'rojo' : ''}"><span>Avisos</span><strong>${av.length}</strong></div></div>`;
   }
   const nAv = (d) => av.filter((a) => a.donde === d).length;
-  const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N']];
+  const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto']];
   el.innerHTML = `<div class="card"><div class="cab"><div class="t"><h2>${esc(p.nombre)}</h2>
       <div class="muted">${esc(p.cliente)} › ${esc(p.finca)} · ${esc(p.cultivo)} · ${fmt(p.superficie, 2)} ha · ${fmt(p.arboles, 0)} árboles</div>
       <div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
@@ -359,6 +364,7 @@ function renderDetalle(el) {
   if (ui.tab === 'finca') tabFinca(body, p);
   else if (ui.tab === 'analiticas') tabAnaliticas(body, p, camp);
   else if (ui.tab === 'riego') tabRiego(body, p, camp);
+  else if (ui.tab === 'necesidades') tabNecesidades(body, p, camp);
   else tabBalance(body, p, camp);
 }
 
@@ -372,7 +378,8 @@ function crearCampana(p, key) {
     dosisEstM3: null, dosisRealM3: null, estiercoles: [],
     riego: prev ? structuredClone(prev.riego) : CALC.MESES.map(() => ({ h: 0, n: 0 })),
     ufAplicadas: CALC.MESES.map(() => [0, 0, 0, 0, 0]),
-    ajustes: prev ? structuredClone(prev.ajustes || {}) : {}, pdf: {}, desde: prevKey || null
+    ajustes: prev ? structuredClone(prev.ajustes || {}) : {}, pdf: {}, desde: prevKey || null,
+    necesidades: prev && prev.necesidades ? prev.necesidades.slice() : null, factores: prev && prev.factores ? prev.factores.slice() : null
   };
   p.campanaActual = key;
   return true;
@@ -451,6 +458,7 @@ function tabFinca(el, p) {
       ${campo('Tipo de cultivo', 'p.tipoCultivo', p.tipoCultivo, { tipo: 'txt', opciones: cultOps })}
       ${campo('Grupo (Kc y tablas)', 'p.grupo', p.grupo, { tipo: 'txt', opciones: CALC.GRUPOS })}
       ${campo('Recintos SIGPAC', 'p.recintos', p.recintos, { tipo: 'txt' })}
+      ${campo('Año de plantación', 'p.anioPlantacion', p.anioPlantacion, { ph: 'p. ej. 2016', auto: CALC.edad(p, ui.camp) != null ? `${CALC.edad(p, ui.camp)} años en ${esc(ui.camp)}` : 'Para calcular la edad de cada campaña' })}
       ${campo('Superficie (ha)', 'p.superficie', p.superficie)}
       ${campo('Nº de árboles', 'p.arboles', p.arboles, { auto: p.superficie && p.arboles ? fmt(p.arboles / p.superficie, 0) + ' árboles/ha reales' : '' })}
       <label class="fld"><span>Zona vulnerable</span><span class="chk"><input type="checkbox" data-k="p.vulnerable" ${p.vulnerable ? 'checked' : ''}> Sí, en zona vulnerable</span></label>
@@ -782,9 +790,144 @@ async function traerV10() {
   if (!d || !d.planes) { toast('No hay datos de la versión 1.0 en esta carpeta', true); return; }
   if (db.planes.length && !confirm(`Drive ya tiene ${db.planes.length} planes. ¿Sustituirlos por los ${d.planes.length} de la versión 1.0?`)) return;
   const logo = await ALM.logo();
-  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; });
+  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; IMP.asegurarRepartos(db); });
   prepararVista(); renderAll();
   toast(`${plural(d.planes.length, 'plan traído', 'planes traídos')} de la versión 1.0`);
+}
+
+/* ---------- Gráfica de barras por mes (kg UF/ha o %) ---------- */
+const NUT_TXT = ['N', 'P2O5', 'K2O', 'CaO', 'MgO'];
+/* series: [{ nombre, valores[12] }] (un color por nutriente, siempre en el mismo orden); marcas: [{ nombre, valores[12] }] trazos sobre la serie 0 */
+function grafica(series, { unidad = 'kg UF/ha', marcas = null, alto = 230, decimales = 1 } = {}) {
+  const W = 960, H = alto, ml = 46, mr = 10, mt = 12, mb = 26;
+  const iw = W - ml - mr, ih = H - mt - mb;
+  const vis = series.map((s, j) => ({ ...s, j })).filter((s) => !(ui.ocultas || []).includes(s.j));
+  let max = 0;
+  for (const s of vis) for (const v of s.valores) max = Math.max(max, +v || 0);
+  if (marcas) for (const m of marcas) for (const v of m.valores) max = Math.max(max, +v || 0);
+  const paso = (() => { const r = max / 4 || 1; const e = 10 ** Math.floor(Math.log10(r)); return [1, 2, 2.5, 5, 10].map((k) => k * e).find((k) => k >= r) || r; })();
+  const top = Math.max(paso * Math.ceil(max / paso), paso);
+  const y = (v) => mt + ih - (v / top) * ih;
+  const gw = iw / 12, n = Math.max(vis.length, 1), gap = 2, pad = gw * 0.16;
+  const bw = Math.max(3, (gw - 2 * pad - gap * (n - 1)) / n);
+  let g = '';
+  for (let t = 0; t <= top + 1e-9; t += paso) g += `<line x1="${ml}" x2="${W - mr}" y1="${y(t)}" y2="${y(t)}" class="gr-grid"/><text x="${ml - 6}" y="${y(t) + 4}" class="gr-eje" text-anchor="end">${fmt(t, paso < 1 ? 1 : 0)}</text>`;
+  CALC.MESES.forEach((m, i) => { g += `<text x="${ml + gw * i + gw / 2}" y="${H - 8}" class="gr-eje" text-anchor="middle">${m.slice(0, 3)}</text>`; });
+  vis.forEach((s, k) => {
+    s.valores.forEach((v, i) => {
+      v = +v || 0; if (v <= 0) return;
+      const x = ml + gw * i + pad + k * (bw + gap), yy = y(v), h = mt + ih - yy, r = Math.min(4, bw / 2, h);
+      g += `<path class="gr-bar s${s.j + 1}" data-t="${esc(CALC.MESES[i])} · ${esc(s.nombre)}: ${fmt(v, decimales)} ${esc(unidad)}" d="M${x},${mt + ih} V${yy + r} Q${x},${yy} ${x + r},${yy} H${x + bw - r} Q${x + bw},${yy} ${x + bw},${yy + r} V${mt + ih} Z"/>`;
+    });
+  });
+  if (marcas) marcas.forEach((m) => m.valores.forEach((v, i) => {
+    v = +v || 0; if (v <= 0) return;
+    const x0 = ml + gw * i + pad - 2, x1 = ml + gw * (i + 1) - pad + 2;
+    g += `<line x1="${x0}" x2="${x1}" y1="${y(v)}" y2="${y(v)}" class="gr-marca" data-t="${esc(CALC.MESES[i])} · ${esc(m.nombre)}: ${fmt(v, decimales)} ${esc(unidad)}"/>`;
+  }));
+  g += `<line x1="${ml}" x2="${W - mr}" y1="${mt + ih}" y2="${mt + ih}" class="gr-base"/>`;
+  const leyenda = series.map((s, j) => `<button class="gr-ley" data-oc="${j}" aria-pressed="${!(ui.ocultas || []).includes(j)}"><i class="s${j + 1}"></i>${esc(s.nombre)}</button>`).join('') +
+    (marcas ? marcas.map((m) => `<span class="gr-ley"><i class="gr-ley-marca"></i>${esc(m.nombre)}</span>`).join('') : '');
+  return `<div class="grafica"><div class="row gr-leyenda">${leyenda}<span class="spacer"></span><span class="small muted">${esc(unidad)} por mes</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Reparto mensual en ${esc(unidad)}">${g}</svg><div class="gr-tip" hidden></div></div>`;
+}
+function enlazarGrafica(el, repintar) {
+  $$('.grafica', el).forEach((gr) => {
+    const tip = $('.gr-tip', gr);
+    gr.addEventListener('mousemove', (e) => {
+      const t = e.target.closest('[data-t]');
+      if (!t) { tip.hidden = true; return; }
+      const r = gr.getBoundingClientRect();
+      tip.textContent = t.dataset.t; tip.hidden = false;
+      tip.style.left = Math.min(e.clientX - r.left + 12, r.width - 200) + 'px'; tip.style.top = (e.clientY - r.top - 34) + 'px';
+    });
+    gr.addEventListener('mouseleave', () => { tip.hidden = true; });
+    $$('[data-oc]', gr).forEach((b) => { b.onclick = () => { const j = +b.dataset.oc; ui.ocultas = ui.ocultas || []; ui.ocultas = ui.ocultas.includes(j) ? ui.ocultas.filter((x) => x !== j) : [...ui.ocultas, j]; repintar(); }; });
+  });
+}
+
+/* ----- Pestaña Necesidades y reparto ----- */
+function tabNecesidades(el, p, camp) {
+  if (!camp) { el.innerHTML = '<p class="muted">Crea antes la campaña.</p>'; return; }
+  const rep = db.repartos.find((r) => r.id === p.reparto) || null;
+  const nc = CALC.necesidades(p, camp, analDePlan(p), cfg(), rep);
+  const edad = CALC.edad(p, ui.camp);
+  const tiposGrupo = [...db.repartos].sort((a, b) => (a.grupo === p.grupo ? 0 : 1) - (b.grupo === p.grupo ? 0 : 1) || a.nombre.localeCompare(b.nombre, 'es'));
+  const filas = NUT_TXT.map((nu, j) => `<tr><td><b>${nu}</b></td>
+      <td class="w"><input class="cell" data-nec="${j}" value="${fmtIn(camp.necesidades && camp.necesidades[j])}"></td>
+      <td class="n">${fmt(nc.estiercol[j], 1)}</td><td class="n">${fmt(nc.agua[j], 1)}</td>
+      <td class="w"><input class="cell" data-fac="${j}" value="${fmtIn(nc.factor[j])}"></td>
+      <td class="n">${fmt(nc.neto[j], 1)}</td>
+      <td class="n"><b>${fmt(nc.objetivo[j], 1)}</b>${j === 0 && nc.limitadoN ? ' <span class="chip amb" title="Limitado por el balance de N">límite balance</span>' : ''}</td></tr>`).join('');
+  const sumaMal = rep ? NUT_TXT.filter((_, j) => nc.suma[j] > 0 && Math.abs(nc.suma[j] - 100) >= 0.05).map((nu, j0) => `${nu} ${fmt(nc.suma[NUT_TXT.indexOf(nu)], 1)} %`) : [];
+  let mes = '';
+  if (nc.mensual) {
+    const tot = NUT_TXT.map((_, j) => nc.mensual.reduce((t, m) => t + m[j], 0));
+    const plan = nc.plan12.length ? nc.plan12 : null;
+    mes = grafica(NUT_TXT.map((nu, j) => ({ nombre: nu, valores: nc.mensual.map((m) => m[j]) })), { marcas: plan ? [{ nombre: 'N en el plan del mes', valores: plan.map((m) => m[0]) }] : null }) +
+      `<div class="scroll-x" style="margin-top:10px"><table class="t"><tr><th>kg UF/ha</th>${CALC.MESES.map((m) => `<th class="n">${m.slice(0, 3)}</th>`).join('')}<th class="n">Total</th></tr>
+      ${NUT_TXT.map((nu, j) => `<tr><td><b>${nu}</b></td>${nc.mensual.map((m) => `<td class="n">${m[j] ? fmt(m[j], 1) : '<span class="muted">–</span>'}</td>`).join('')}<td class="n"><b>${fmt(tot[j], 1)}</b></td></tr>`).join('')}
+      ${plan ? `<tr class="muted"><td>N en el plan</td>${plan.map((m) => `<td class="n">${m[0] ? fmt(m[0], 1) : '–'}</td>`).join('')}<td class="n">${fmt(plan.reduce((t, m) => t + m[0], 0), 1)}</td></tr>` : ''}</table></div>`;
+  }
+  el.innerHTML = `<div class="row" style="margin-bottom:10px">${edad != null ? `<span class="chip">Edad: ${edad} años en ${esc(ui.camp)}</span>` : '<span class="chip amb">Sin año de plantación (pestaña Finca)</span>'}<span class="chip">${esc(p.tipoCultivo || p.cultivo)}</span></div>
+    <h3>Necesidades anuales (UF/ha)</h3>
+    <div class="scroll-x"><table class="t"><tr><th></th><th class="n">Necesidad teórica</th><th class="n">− Estiércol</th><th class="n">− Agua de riego</th><th class="n">× Factor</th><th class="n">A aportar</th><th class="n">Objetivo</th></tr>${filas}</table></div>
+    <p class="small muted">Necesidad teórica: la del Excel por ahora (las tablas por cultivo y edad según bibliografía llegarán más adelante). Agua: con ${fmt(nc.b.dosisRiego, 0)} m³/ha de riego. El N objetivo no pasa del balance (${fmt(nc.nBalance, 1)} kg N/ha).</p>
+    <h3 style="margin-top:18px">Reparto mensual</h3>
+    <div class="row"><select class="cell izq" id="nRep" style="max-width:360px"><option value="">— Elegir tipo de reparto —</option>${tiposGrupo.map((r) => `<option value="${r.id}" ${r.id === p.reparto ? 'selected' : ''}>${esc(r.nombre)} (${esc(r.grupo.toLowerCase())})</option>`).join('')}</select>
+      <button class="btn peq" id="nEdit" ${rep ? '' : 'disabled'}>Editar este tipo</button><button class="btn peq" id="nTipos">Ver todos los tipos</button></div>
+    ${sumaMal.length ? `<div class="aviso" style="margin-top:8px">El tipo «${esc(rep.nombre)}» no suma 100 %: ${sumaMal.join(', ')}. Corrígelo en Repartos.</div>` : ''}
+    <div style="margin-top:12px">${mes || '<p class="muted">Elige un tipo de reparto para ver las UF de cada mes.</p>'}</div>`;
+  $$('[data-nec]', el).forEach((i) => i.addEventListener('change', () => { commit(() => { camp.necesidades = camp.necesidades || [null, null, null, null, null]; camp.necesidades[+i.dataset.nec] = CALC.num(i.value); }, { render: false }); renderDetalleSoloCuerpo(); }));
+  $$('[data-fac]', el).forEach((i) => i.addEventListener('change', () => { commit(() => { camp.factores = camp.factores || [1, 1, 1, 1, 1]; camp.factores[+i.dataset.fac] = CALC.num(i.value) ?? 1; }, { render: false }); renderDetalleSoloCuerpo(); }));
+  $('#nRep', el).onchange = (e) => { commit(() => { p.reparto = e.target.value || null; }, { render: false }); renderDetalleSoloCuerpo(); };
+  $('#nEdit', el).onclick = () => { ui.vista = 'repartos'; ui.repId = p.reparto; renderAll(); };
+  $('#nTipos', el).onclick = () => { ui.vista = 'repartos'; renderAll(); };
+  enlazarGrafica(el, () => renderDetalleSoloCuerpo());
+}
+
+/* ---------- REPARTOS (tipos de reparto mensual) ---------- */
+function renderRepartos(v) {
+  const lista = [...db.repartos].sort((a, b) => a.grupo.localeCompare(b.grupo) || a.nombre.localeCompare(b.nombre, 'es'));
+  if (!ui.repId || !db.repartos.some((r) => r.id === ui.repId)) ui.repId = lista[0] ? lista[0].id : null;
+  const r = db.repartos.find((x) => x.id === ui.repId);
+  const usosR = (x) => db.planes.filter((p) => p.reparto === x.id);
+  let det = '<div class="card vacio"><p>Crea el primer tipo de reparto.</p></div>';
+  if (r) {
+    const su = CALC.sumaReparto(r);
+    const ps = usosR(r);
+    det = `<div class="card"><div class="grid3">
+        <label class="fld" style="grid-column:span 2"><span>Nombre</span><input id="rNom" value="${esc(r.nombre)}"></label>
+        <label class="fld"><span>Grupo</span><select id="rGru">${CALC.GRUPOS.map((g) => `<option ${g === r.grupo ? 'selected' : ''}>${g}</option>`).join('')}</select></label>
+        <label class="fld" style="grid-column:span 3"><span>Notas</span><input id="rNot" value="${esc(r.notas || '')}" placeholder="p. ej. árboles jóvenes, más N en primavera…"></label></div>
+      <h3 style="margin-top:14px">% de la necesidad anual en cada mes</h3>
+      <div class="scroll-x"><table class="t"><tr><th>Mes</th>${NUT_TXT.map((n) => `<th class="n">${n}</th>`).join('')}</tr>
+      ${CALC.MESES.map((m, i) => `<tr><td>${m}</td>${NUT_TXT.map((_, j) => `<td class="w"><input class="cell" data-pct="${i}.${j}" value="${fmtIn(r.pct[i][j] || '')}" placeholder="0"></td>`).join('')}</tr>`).join('')}
+      <tr class="tot"><td>Total</td>${su.map((x) => `<td class="n"><span class="${Math.abs(x - 100) < 0.05 ? 'chip v' : 'chip rojo'}">${fmt(x, 1)} %</span></td>`).join('')}</tr></table></div>
+      <div style="margin-top:14px">${grafica(NUT_TXT.map((nu, j) => ({ nombre: nu, valores: r.pct.map((m) => m[j]) })), { unidad: '%', decimales: 1, alto: 200 })}</div>
+      <p class="small muted" style="margin-top:10px">Lo usan ${plural(ps.length, 'plan', 'planes')}${ps.length ? ': ' + ps.slice(0, 12).map((p) => esc(p.nombre)).join(', ') + (ps.length > 12 ? '…' : '') : ''}. Un cambio aquí cambia el reparto de todos ellos.</p>
+      <div class="row" style="margin-top:8px"><button class="btn peq" id="rDup">Duplicar</button><button class="btn peq rojo" id="rDel" ${ps.length ? 'disabled title="Lo usan planes"' : ''}>Borrar</button></div></div>`;
+  }
+  v.innerHTML = `<div class="planes"><div class="card lista"><div class="busca"><div class="row"><b style="flex:1">Tipos de reparto</b><button class="btn peq" id="rNuevo">+ Nuevo</button></div>
+      <div class="small muted">El % de la necesidad anual de cada nutriente que va a cada mes.</div></div>
+      <div class="items">${lista.map((x) => { const ok = CALC.sumaReparto(x).every((s) => s === 0 || Math.abs(s - 100) < 0.05); return `<button class="item" data-rep="${x.id}" aria-current="${x.id === ui.repId}"><span class="dot ${ok ? 'ok' : 'medio'}"></span><span class="t"><b>${esc(x.nombre)}</b><span>${esc(x.grupo.toLowerCase())} · ${plural(usosR(x).length, 'plan', 'planes')}</span></span></button>`; }).join('')}</div></div>
+    <div>${det}</div></div>`;
+  $$('[data-rep]', v).forEach((b) => { b.onclick = () => { ui.repId = b.dataset.rep; renderRepartos(v); }; });
+  $('#rNuevo', v).onclick = () => { const n = { id: uid('r'), nombre: 'Nuevo tipo', grupo: 'CITRICOS', pct: CALC.MESES.map(() => [0, 0, 0, 0, 0]), notas: '' }; commit((d) => { d.repartos.push(n); ui.repId = n.id; }); };
+  if (!r) return;
+  $('#rNom', v).onchange = (e) => commit(() => { r.nombre = e.target.value.trim() || r.nombre; });
+  $('#rGru', v).onchange = (e) => commit(() => { r.grupo = e.target.value; });
+  $('#rNot', v).onchange = (e) => commit(() => { r.notas = e.target.value.trim(); }, { render: false });
+  $$('[data-pct]', v).forEach((i) => i.addEventListener('change', () => {
+    const [m, j] = i.dataset.pct.split('.').map(Number);
+    const pos = window.scrollY;
+    commit(() => { r.pct[m][j] = CALC.num(i.value) ?? 0; });
+    window.scrollTo(0, pos);
+    const sig = $(`[data-pct="${m + 1}.${j}"]`); if (sig) sig.focus();
+  }));
+  $('#rDup', v).onclick = () => { const n = { ...structuredClone(r), id: uid('r'), nombre: r.nombre + ' (copia)' }; commit((d) => { d.repartos.push(n); ui.repId = n.id; }); };
+  $('#rDel', v).onclick = () => { if (!confirm(`¿Borrar el tipo «${r.nombre}»?`)) return; commit((d) => { d.repartos = d.repartos.filter((x) => x.id !== r.id); ui.repId = null; }); };
+  enlazarGrafica(v, () => renderRepartos(v));
 }
 
 /* ---------- Nuevo plan ---------- */
@@ -809,6 +952,7 @@ function nuevoPlan() {
     Object.assign(p, { id: uid('p'), origen: null, cliente, finca, carpeta: cliente + '/' + finca, tipoCultivo: tipo, grupo: cult ? cult.grupo : (base ? base.grupo : 'CITRICOS'), cultivo: tipo, nombre: $('#nNom', m).value.trim() || `${cliente} ${tipo} ${finca}`, mxCli: null, mxFin: null });
     if (base) { const k = Object.keys(base.campanas || {}).sort().slice(-1)[0]; p.campanas = {}; if (k) { p.campanas[ui.camp] = structuredClone(base.campanas[k]); Object.assign(p.campanas[ui.camp], { ufAplicadas: CALC.MESES.map(() => [0, 0, 0, 0, 0]), estiercoles: [], pdf: {}, excel: null, produccionReal: null, dosisRealM3: null }); } }
     if (!p.campanas[ui.camp]) crearCampana(p, ui.camp);
+    if (!p.reparto) { const r = db.repartos.find((x) => x.grupo === p.grupo); if (r) p.reparto = r.id; }
     p.campanaActual = ui.camp;
     if (IX) enlazarPlan(p, false);
     commit((d) => { d.planes.push(p); ui.planId = p.id; ui.tab = 'finca'; ui.vista = 'planes'; });
@@ -1000,7 +1144,7 @@ async function abrirImportar() {
       if (i % 4 === 3) await new Promise((r) => setTimeout(r, 0));
     }
     let res;
-    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; });
+    commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; IMP.asegurarRepartos(d); });
     const camps = campanas(); if (!camps.includes(ui.camp)) ui.camp = camps.slice(-1)[0];
     const plantillas = db.analiticas.filter((a) => a.plantilla);
     $('.cuerpo', m).innerHTML = `<h3>Importación terminada</h3><ul>

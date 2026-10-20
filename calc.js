@@ -227,6 +227,47 @@
     return b.est.reduce((t, e) => ({ n: t.n + e.nMin, p2o5: t.p2o5 + e.p2o5, k2o: t.k2o + e.k2o, cao: t.cao + e.cao, mgo: t.mgo + e.mgo }), { n: 0, p2o5: 0, k2o: 0, cao: 0, mgo: 0 });
   }
 
+
+  /* ---------- Necesidades anuales y reparto mensual (fase 2) ---------- */
+  const NUTRIENTES = ['N', 'P2O5', 'K2O', 'CaO', 'MgO'];
+  /* Aportes del agua de riego en UF/ha, como la cabecera de la pestaña 4 del Excel */
+  function aportesAgua(agua, dosis) {
+    const v = (agua && agua.v) || {};
+    const d = n0(dosis);
+    return [
+      n0(v.no3) * d * 0.226 / 1000 * 0.9,
+      0,
+      n0(v.k) * d * 1.205 / 1000 * 0.9,
+      n0(v.ca) * d * 1.39 / 1000 * 0.6 * 0.5,
+      n0(v.mg) * d * 1.65 / 1000 * 0.6 * 0.5
+    ];
+  }
+  function edad(plan, campKey) {
+    const a = num(plan.anioPlantacion), c = num(campKey);
+    return a && c ? Math.max(0, c - a) : null;
+  }
+  function sumaReparto(rep) {
+    return NUTRIENTES.map((_, j) => (rep && rep.pct ? rep.pct.reduce((t, m) => t + n0(m && m[j]), 0) : 0));
+  }
+  /* Necesidad teórica − estiércol − agua, por el factor de corrección. El N, además, no pasa del balance. */
+  function necesidades(plan, camp, anal, cfg = {}, rep = null) {
+    camp = camp || {};
+    const b = balanceN(plan, camp, anal, 'estimado', cfg);
+    const est = aportesEstiercol(b);
+    const estA = [est.n, est.p2o5, est.k2o, est.cao, est.mgo];
+    const agua = aportesAgua(anal.agua, b.dosisRiego);
+    const teor = NUTRIENTES.map((_, j) => num(camp.necesidades && camp.necesidades[j]));
+    const factor = NUTRIENTES.map((_, j) => num(camp.factores && camp.factores[j]) ?? 1);
+    const neto = teor.map((t, j) => (t == null ? null : Math.max(0, (t - estA[j] - agua[j]) * factor[j])));
+    const objetivo = neto.slice();
+    let limitadoN = false;
+    if (objetivo[0] != null && b.prod && b.coef && objetivo[0] > b.aporte) { objetivo[0] = b.aporte; limitadoN = true; }
+    const suma = sumaReparto(rep);
+    const mensual = rep && rep.pct ? MESES.map((_, i) => NUTRIENTES.map((__, j) => (objetivo[j] == null ? 0 : objetivo[j] * n0(rep.pct[i] && rep.pct[i][j]) / 100))) : null;
+    const plan12 = (camp.ufAplicadas || []).map((m) => NUTRIENTES.map((_, j) => n0(m && m[j])));
+    return { b, teor, estiercol: estA, agua, factor, neto, objetivo, limitadoN, nBalance: b.aporte, suma, repartoOk: !!rep && suma.every((x) => Math.abs(x - 100) < 0.05), mensual, plan12 };
+  }
+
   /* ---------- Avisos de un plan ---------- */
   function edadAnios(fecha, hoy = new Date()) {
     if (!fecha) return null;
@@ -262,9 +303,14 @@
     if (!(camp.riego || []).some((m) => m && m.h && m.n)) add('medio', 'Sin horas ni riegos programados', 'riego');
     if (s && !s.plantilla && s.v && s.v.textura && plan.textura && texturaTabla(s.v.textura) !== texturaTabla(plan.textura)) add('bajo', `Textura distinta en el riego (${plan.textura}) y en la analítica (${s.v.textura})`, 'riego');
     if (!plan.marco || !n0(plan.marco.filas) || !n0(plan.marco.arboles)) add('medio', 'Falta el marco de plantación', 'finca');
+    const rep = plan.reparto && db.repartos ? db.repartos.find((r) => r.id === plan.reparto) : null;
+    if (!rep) add('medio', 'Sin tipo de reparto mensual', 'necesidades');
+    else { const su = sumaReparto(rep); const mal = NUTRIENTES.filter((_, j) => su[j] > 0 && Math.abs(su[j] - 100) >= 0.05); if (mal.length) add('medio', `El reparto «${rep.nombre}» no suma 100 % en ${mal.join(', ')}`, 'necesidades'); }
+    if (!(camp.necesidades || []).some((x) => num(x))) add('medio', 'Faltan las necesidades anuales', 'necesidades');
+    if (!num(plan.anioPlantacion)) add('bajo', 'Falta el año de plantación', 'finca');
     return out;
   }
 
-  const api = { MESES, GRUPOS, TEXTURAS, CULTIVOS, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
+  const api = { MESES, GRUPOS, TEXTURAS, CULTIVOS, NUTRIENTES, aportesAgua, edad, sumaReparto, necesidades, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CALC = api;
 })(typeof window !== 'undefined' ? window : globalThis);

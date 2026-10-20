@@ -9,7 +9,13 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 - **Balance de N** (pestaña 2 del Excel) con fA, fB y humus automáticos, estiércoles que restan siempre y **PDF «Estimado» y «Cerrado»** guardados en la carpeta del cliente.
 - **Avisos**: N del plan por encima del balance, N orgánico > 170 kg/ha en zona vulnerable, falta de datos…
 
-Próximas fases: necesidades por cultivo y reparto mensual con gráfica (2), productos, dosis y tanques (3) e informe mensual por lotes (4).
+**Fase 2 (versión 1.2, en marcha):**
+- **Repartos**: tipos de reparto mensual (% de la necesidad anual de cada nutriente por mes), creados a partir de los Excels y editables. Avisa si un tipo no suma 100 %.
+- **Necesidades y reparto** en cada plan: necesidad teórica − estiércol − agua de riego × factor de corrección = UF/ha a aportar; el N no pasa del balance. Reparto de cada mes en kg UF/ha con gráfica, comparado con el N del plan.
+- Año de plantación de cada plan (edad por campaña).
+- Pendiente: necesidades por cultivo y edad según bibliografía.
+
+Próximas fases: productos, dosis y tanques (3) e informe mensual por lotes (4).
 
 ## Dónde están los datos (desde la versión 1.1)
 En **Google Drive**, no en este repositorio (es público: aquí no hay datos de clientes).

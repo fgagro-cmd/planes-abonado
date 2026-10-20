@@ -193,3 +193,22 @@ code { font-family: var(--mono); font-size: 12px; background: var(--chip); paddi
   .btn, .tab, .item { min-height: 40px; }
   input.cell { padding: 7px 6px; }
 }
+
+/* Gráfica de barras por mes · paleta categórica validada (orden fijo: N, P2O5, K2O, CaO, MgO) */
+:root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --gr-grid: #e6ebe7; --gr-eje: #667a6e; --gr-marca: #18241d; }
+@media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --gr-grid: #2a352d; --gr-eje: #93a698; --gr-marca: #e8efe9; } }
+.grafica { position: relative; }
+.grafica svg { width: 100%; height: auto; display: block; }
+.gr-grid { stroke: var(--gr-grid); stroke-width: 1; }
+.gr-base { stroke: var(--gr-eje); stroke-width: 1; }
+.gr-eje { fill: var(--gr-eje); font-size: 11px; font-variant-numeric: tabular-nums; }
+.gr-bar { stroke: var(--card); stroke-width: 0; }
+.gr-bar:hover { opacity: .8; }
+.s1 { fill: var(--s1); background: var(--s1); } .s2 { fill: var(--s2); background: var(--s2); } .s3 { fill: var(--s3); background: var(--s3); } .s4 { fill: var(--s4); background: var(--s4); } .s5 { fill: var(--s5); background: var(--s5); }
+.gr-marca { stroke: var(--gr-marca); stroke-width: 2.5; stroke-linecap: round; }
+.gr-leyenda { gap: 6px; margin-bottom: 6px; }
+.gr-ley { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none; border-radius: 12px; padding: 2px 9px; font-size: 12px; color: var(--ink); }
+.gr-ley[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+.gr-ley i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.gr-ley i.gr-ley-marca { height: 3px; border-radius: 2px; background: var(--gr-marca); }
+.gr-tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--card); font-size: 12px; padding: 5px 9px; border-radius: 8px; white-space: nowrap; z-index: 5; }
