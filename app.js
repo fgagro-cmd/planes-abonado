@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -336,6 +336,7 @@ function renderPlanes(v) {
     if (ui.filtro === 'avisos' && !av.some((a) => a.nivel === 'alto')) return false;
     if (ui.filtro === 'vulnerable' && !p.vulnerable) return false;
     if (ui.filtro === 'sincamp' && campDe(p)) return false;
+    if (ui.filtro === 'sinenlace' && p.mxFin) return false;
     return true;
   }).sort((a, b) => (a.p.cliente || '').localeCompare(b.p.cliente || '', 'es') || (a.p.nombre || '').localeCompare(b.p.nombre || '', 'es'));
   if (!ui.planId || !db.planes.some((p) => p.id === ui.planId)) ui.planId = (lista[0] || conAv[0]).p.id;
@@ -344,7 +345,7 @@ function renderPlanes(v) {
     if (p.cliente !== cli) { cli = p.cliente; html += `<div class="grupo-cli">${esc(cli || 'Sin cliente')}</div>`; }
     html += `<button class="item" data-plan="${p.id}" aria-current="${p.id === ui.planId}"><span class="dot ${nivelPlan(av)}"></span><span class="t"><b>${esc(p.nombre)}</b><span>${esc(p.finca)} · ${esc(p.tipoCultivo || p.cultivo)}</span></span>${p.vulnerable ? '<span class="chip amb" title="Zona vulnerable">ZV</span>' : ''}</button>`;
   }
-  const filtros = [['todos', 'Todos'], ['avisos', 'Con avisos'], ['vulnerable', 'Zona vulnerable'], ['sincamp', 'Sin campaña ' + ui.camp]];
+  const filtros = [['todos', 'Todos'], ['avisos', 'Con avisos'], ['vulnerable', 'Zona vulnerable'], ['sincamp', 'Sin campaña ' + ui.camp], ...(IX ? [['sinenlace', `Sin enlazar (${db.planes.filter((x) => !x.mxFin).length})`]] : [])];
   v.innerHTML = `<div class="planes">
     <div class="card lista"><div class="busca"><div class="row"><input id="pq" type="search" placeholder="Buscar plan, cliente, finca…" value="${esc(ui.q)}" style="flex:1"><button class="btn peq" id="pNuevo" title="Nuevo plan">+ Nuevo</button></div>
       <div class="filtros">${filtros.map(([k, t]) => `<button data-f="${k}" aria-pressed="${ui.filtro === k}">${esc(t)}</button>`).join('')}</div>
@@ -1507,7 +1508,7 @@ function renderAjustes(v) {
     <div class="card"><h3>Maestros (Drive › Apps › Maestros)</h3>
       <p class="small muted">La misma dirección y clave que en Ventas o Asesor. Sirve para enlazar cada plan con su cliente y finca del maestro (lo usará la marca de «enviado» en Asesor).</p>
       <div class="grid2"><label class="fld"><span>Dirección del script (…/exec)</span><input id="aMxU" value="${esc(mxCfg.url || '')}"></label><label class="fld"><span>Clave</span><input id="aMxK" type="password" value="${esc(mxCfg.clave || '')}"></label></div>
-      <div class="row" style="margin-top:10px"><button class="btn" id="aMxOk">Probar y leer</button>${IX ? `<button class="btn" id="aMxEnl">Enlazar planes por nombre</button><span class="small muted">${mxData.clientes.length} clientes · ${mxData.fincas.length} fincas · ${sinEnlace} planes sin enlazar</span>` : ''}</div></div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="aMxOk">Probar y leer</button>${IX ? `<button class="btn" id="aMxEnl">Enlazar planes por nombre</button>${sinEnlace ? '<button class="btn" id="aMxVer">Ver los planes sin enlazar</button>' : ''}<span class="small muted">${mxData.clientes.length} clientes · ${mxData.fincas.length} fincas · ${sinEnlace} planes sin enlazar</span>` : ''}</div></div>
     <div class="card"><h3>Informe PDF</h3>
       <div class="row">${logoCache ? `<img src="${logoCache}" alt="Logo" style="height:42px;border:1px solid var(--line);border-radius:6px;padding:3px;background:#fff">` : '<span class="small muted">Sin logo (se toma del primer Excel al importar).</span>'}<label class="btn peq">Cambiar logo<input type="file" id="aLogo" accept="image/png,image/jpeg" hidden></label></div>
       <label class="fld" style="margin-top:10px"><span>Pie del PDF del balance de N</span><input id="aAutor" value="${esc(c.autor || '')}"></label>
@@ -1555,6 +1556,7 @@ function renderAjustes(v) {
     } catch (e) { toast(e.message || String(e), true); }
   };
   const enl = $('#aMxEnl');
+  if ($('#aMxVer')) $('#aMxVer').onclick = () => { ui.vista = 'planes'; ui.filtro = 'sinenlace'; ui.q = ''; ui.tab = 'finca'; ui.planId = null; renderAll(); };
   if (enl) enl.onclick = () => { let n = 0; commit((d) => { for (const p of d.planes) if (!p.mxFin && enlazarPlan(p, false)) n++; }); toast(`Enlazados ${plural(n, 'plan', 'planes')} más`); };
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
