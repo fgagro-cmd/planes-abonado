@@ -237,7 +237,7 @@
     });
     const yTabla = doc.lastAutoTable.finalY;
     // UF del mes (barras)
-    const bx = 106, by = y + 4, bw = 44;
+    const bx = 104, by = y + 4, bw = 34;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...TINTA); doc.text('Unidades fertilizantes del mes', bx, by);
     const maxUf = Math.max(...d.ufMes, 1);
     ['N', 'P2O5', 'K2O', 'CaO', 'MgO'].forEach((nu, j) => {
@@ -249,7 +249,7 @@
     });
     doc.setFontSize(6.8); doc.setTextColor(...GRIS); doc.text('kg UF/ha', bx + 10, by + 4 + 5 * 5.6 + 1.5);
     // Agua: rosca mes / año
-    const rx = 180, ry = y + 17, r1 = 13, r0 = 9;
+    const rx = 184, ry = y + 17, r1 = 12, r0 = 8.4;
     const frac = d.aguaAnio ? Math.min(1, d.aguaMes / d.aguaAnio) : 0;
     sector(doc, rx, ry, r0, r1, -Math.PI / 2, 1.5 * Math.PI, AZUL_CL);
     sector(doc, rx, ry, r0, r1, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * frac, AZUL);
@@ -264,7 +264,7 @@
     y = Math.max(yTabla, ry + 23) + 9;
     const obs = [];
     if (d.obs) obs.push(d.obs);
-    if (d.acido) obs.push(`Dosis de ácido nítrico/ácido fosfórico para limpieza de goteros: ${f(d.acido.nitrico, 1)} L de nítrico o ${f(d.acido.fosforico, 1)} L de fosfórico. Inyectar durante 1 hora. Después abrir las mangueras. Se recomienda una vez al mes.`);
+    if (d.acido) obs.push(`En caso de necesidad, la dosis de ácido nítrico/ácido fosfórico para limpieza de goteros es de ${f(d.acido.nitrico, 1)} L de nítrico o ${f(d.acido.fosforico, 1)} L de fosfórico. Inyectar durante 1 hora. Después abrir las mangueras. Se recomienda una vez al mes.`);
     if (d.recintos) obs.push(`Esta unidad de producción incluye los siguientes recintos: ${d.recintos}`);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.6);
     const lineasObs = obs.flatMap((t, k) => [...doc.splitTextToSize(t, D - M - 12), ...(k < obs.length - 1 ? [''] : [])]);

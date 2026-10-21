@@ -209,7 +209,20 @@
     if (pt.modo === 'ninguno') return [];
     if (pt.modo === 'todos') return rango;
     if (pt.modo === 'semana' && (pt.dias || []).length) return rango.filter((d) => pt.dias.includes(diaSemana(anio, i, d)));
-    return repartir(rango, n0(camp && camp.riego && camp.riego[i] && camp.riego[i].n));
+    return semanaFija(rango, anio, i, n0(camp && camp.riego && camp.riego[i] && camp.riego[i].n));
+  }
+  /* Auto: siempre los mismos días de la semana (para no cambiar el programador cada semana).
+     Se elige cuántos días por semana dan un total más cercano al nº de riegos; si sobra alguno, se quitan los últimos del mes. */
+  const DIAS_FIJOS = { 1: [2], 2: [0, 3], 3: [0, 2, 4], 4: [0, 1, 3, 5], 5: [0, 1, 2, 3, 4], 6: [0, 1, 2, 3, 4, 5], 7: [0, 1, 2, 3, 4, 5, 6] };
+  function semanaFija(rango, anio, i, n) {
+    if (!n) return [];
+    let mejor = null;
+    for (let k = 1; k <= 7; k++) {
+      const dias = rango.filter((d) => DIAS_FIJOS[k].includes(diaSemana(anio, i, d)));
+      const dif = Math.abs(dias.length - n);
+      if (!mejor || dif < mejor.dif || (dif === mejor.dif && dias.length > mejor.dias.length)) mejor = { dias, dif };
+    }
+    return mejor.dias.slice(0, Math.max(n, 0) >= mejor.dias.length ? mejor.dias.length : n);
   }
   function calendario(plan, camp, anio, i) {
     const manual = camp && camp.cal && Array.isArray(camp.cal[i]) ? camp.cal[i] : null;
