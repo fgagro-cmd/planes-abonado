@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -146,7 +146,8 @@ async function arrancar() {
   if (!NUBE.conectada()) { conn = 'sin-nube'; renderAll(); }
   else await abrir();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-  if (!window.__reloj) window.__reloj = setInterval(() => { comprobarCambios(); }, 90000);
+  // Cada 90 s: trae los cambios de otros equipos y, si este ordenador tiene OneDrive, pasa los PDF hechos en la tablet
+  if (!window.__reloj) window.__reloj = setInterval(async () => { await comprobarCambios(); if (od === 'listo' && pendientesOneDrive()) procesarPendientes(); }, 90000);
 }
 function asegurarFert(d) {
   let cambio = false;
