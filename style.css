@@ -227,3 +227,25 @@ table.fert select.cell[data-c="prodId"] { min-width: 190px; }
 table.fert select.cell[data-c="tanque"] { min-width: 92px; }
 table.fert input.cell[data-c="periodo"] { min-width: 110px; }
 table.fert td.n { white-space: nowrap; }
+
+/* Calendario de riego del mes */
+.cal-box { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-top: 10px; }
+.cal { display: grid; grid-template-columns: repeat(7, 34px); gap: 3px; }
+.cal-h { text-align: center; font-size: 11.5px; font-weight: 700; color: var(--muted); padding: 2px 0; }
+.cal-h.fin, .cal-d.fin { color: var(--danger); }
+.cal-d { height: 30px; border: 1px solid var(--line); background: var(--card); border-radius: 7px; font-size: 12.5px; font-variant-numeric: tabular-nums; padding: 0; }
+.cal-d:hover { border-color: var(--brand); }
+.cal-d.on { background: #bdd7ee; border-color: #5b9bd5; color: #0d2a45; font-weight: 700; }
+@media (prefers-color-scheme: dark) { .cal-d.on { background: #23486b; border-color: #3a78b5; color: #e6f0fb; } }
+.cal-ctl { display: flex; flex-direction: column; gap: 8px; min-width: 190px; flex: 1; }
+.dsem { display: flex; gap: 3px; }
+.dsem button { width: 30px; height: 28px; border: 1px solid var(--line); background: var(--card); border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.dsem button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.qrow { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.qrow span { flex: 1; color: var(--muted); }
+.fld textarea { resize: vertical; line-height: 1.45; }
+.kpi.amb strong { color: var(--warn); }
+td.nw { white-space: nowrap; }
+table.inf td { vertical-align: top; }
+@media (pointer: coarse) { .cal { grid-template-columns: repeat(7, 40px); } .cal-d { height: 36px; } }
+.cal-ctl > .btn { align-self: flex-start; }

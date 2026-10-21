@@ -22,7 +22,14 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 - **Solución nutritiva** (solo para el técnico): iones en meq/L, CE estimada, % de cationes y aniones con rangos y ácido para bajar los bicarbonatos.
 - El N del plan del balance sale ya de estas líneas (igual que en el Excel: 899 de 912 meses idénticos; el resto por cambios de riqueza en la tabla de productos).
 
-Próxima fase: informe mensual por lotes (4).
+**Fase 4 (versión 1.4):**
+- **Calendario de riego** de cada mes (pestaña Fertirrigación): patrón por finca (repartir los riegos, días fijos L-M-X…, todos o ninguno; todo el mes o una quincena), +1/−1 día por quincena y pulsar un día para ponerlo o quitarlo. Avisa si los días marcados no coinciden con el nº de riegos.
+- **Observaciones** por mes, que salen en el informe.
+- **Informe mensual en PDF** con el mismo diseño del Excel (página 1) y una página 2 con la información fitosanitaria del grupo de cultivo, la situación actual y «Tu plan de un vistazo» (campaña mes a mes, cuánto se lleva aplicado, de dónde sale el nitrógeno y lo comprobado).
+- **Textos**: información fitosanitaria por grupo (cítricos, frutales, almendro, olivos) y situación actual, por mes.
+- **Informes**: lista del mes con el estado de cada plan, «Preparar mes» (copia el mismo mes de la campaña anterior o el mes anterior en los planes vacíos), marcar revisados y generar los PDF de los revisados en `Clientes/<carpeta>/Planes de abonado/` y una copia en `Planes de abonado/` (raíz de Asesoramiento agrícola). En la tablet quedan en Drive y el ordenador los pasa.
+- El pie del informe (texto, teléfono y email) se escribe en Ajustes y se guarda en Drive, no en el código.
+- El script tiene la acción `enviados`, que usa la app Asesor para marcar «Enviado» los meses con todos los informes generados.
 
 ## Dónde están los datos (desde la versión 1.1)
 En **Google Drive**, no en este repositorio (es público: aquí no hay datos de clientes).
@@ -39,6 +46,7 @@ En **Google Drive**, no en este repositorio (es público: aquí no hay datos de 
 3. Arriba elige la función **autorizar** → **Ejecutar** → acepta los permisos.
 4. **Implementar → Nueva implementación** → tipo **Aplicación web** → Ejecutar como **Yo** → Quién tiene acceso **Cualquier usuario** → **Implementar**. Copia la dirección que termina en `/exec`.
 5. En la app: pega la dirección y la clave en «Conectar con Google Drive».
+6. Al cambiar el script (p. ej. versión 1.4, acción `enviados`): pega el código nuevo y haz **Implementar → Gestionar implementaciones → editar (lápiz) → Versión: Nueva versión → Implementar**. La dirección no cambia.
 
 ## Archivos
 | Archivo | Para qué |

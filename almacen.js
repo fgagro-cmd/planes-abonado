@@ -151,6 +151,13 @@
     await escribir(d, limpio, blob);
     return 'Clientes/' + carpeta + '/Planes de abonado/' + limpio;
   }
+  /* Copia en una carpeta de la raíz (Asesoramiento agrícola/<ruta>), p. ej. «Planes de abonado» */
+  async function guardarEnRaiz(ruta, nombre, blob) {
+    const d = await subdir(raiz, ruta, true);
+    const limpio = nombre.replace(/[\\/:*?"<>|]/g, '-');
+    await escribir(d, limpio, blob);
+    return ruta + '/' + limpio;
+  }
   async function existeCarpetaCliente(carpeta) {
     try { const cli = await raiz.getDirectoryHandle('Clientes'); await subdir(cli, carpeta, false); return true; } catch (_) { return false; }
   }
@@ -175,5 +182,5 @@
     await escribir(d, ext === 'png' ? 'logo.png' : 'logo.jpg', blob);
   }
 
-  root.ALM = { CARPETA_APP, soportado, iniciar, reconectar, elegirCarpeta, nombreRaiz, cargar, guardar, cambiadoFuera, cache, marcarUso, usoOtro, listarExcels, leerArchivo, leerRuta, guardarPDF, existeCarpetaCliente, logo, guardarLogo, kvGet, kvSet };
+  root.ALM = { CARPETA_APP, soportado, iniciar, reconectar, elegirCarpeta, nombreRaiz, cargar, guardar, cambiadoFuera, cache, marcarUso, usoOtro, listarExcels, leerArchivo, leerRuta, guardarPDF, guardarEnRaiz, existeCarpetaCliente, logo, guardarLogo, kvGet, kvSet };
 })(typeof window !== 'undefined' ? window : globalThis);

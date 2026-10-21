@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -25,7 +25,7 @@ function haceTxt(iso) {
 
 /* ---------- Estado ---------- */
 let db = null;
-let ui = { vista: 'planes', planId: null, tab: 'finca', q: '', filtro: 'todos', camp: null, analTipo: 'todas' };
+let ui = { vista: 'planes', planId: null, tab: 'finca', q: '', filtro: 'todos', camp: null, analTipo: 'todas', infMes: null, infQ: '', infFiltro: 'todos', txtMes: null };
 let local = { equipo: '' };
 let conn = 'iniciando'; // sin-nube | error | listo
 let dirty = false, guardando = false, saveTimer = null, ultimoGuardado = null, errorGuardar = '';
@@ -33,11 +33,12 @@ let versionNube = 0, offline = false, od = 'no-disponible'; // od: estado de la 
 let logoCache = null;
 let mxData = null, IX = null;
 
+const TEXTO_PIE = 'Este programa de cálculo ha sido diseñado íntegramente para el cálculo de la necesidad mensual de riego y nutrición del cultivo. Para ello, tiene en cuenta los siguientes factores: características del sistema de riego, características del cultivo, producción estimada, extracciones nutricionales, analíticas (agua de riego, suelo y hoja) en caso de estar disponibles, condiciones climáticas locales, limitaciones de la legislación vigente, necesidades del mercado, etc.';
 function dbVacia() {
   return {
     version: 1, creado: new Date().toISOString(), guardado: null,
-    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' } },
-    planes: [], analiticas: []
+    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' } },
+    planes: [], analiticas: [], textos: {}
   };
 }
 function migrar(d) {
@@ -46,6 +47,8 @@ function migrar(d) {
   d.config.kc = { ...v.config.kc, ...(d.config.kc || {}) };
   d.config.antiguedad = { ...v.config.antiguedad, ...(d.config.antiguedad || {}) };
   d.config.mx = d.config.mx || { url: '', clave: '' };
+  d.config.pie = { ...v.config.pie, ...(d.config.pie || {}) };
+  d.textos = d.textos || {};
   d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
 }
@@ -206,7 +209,7 @@ async function conectarOneDrive() {
 async function asegurarOneDrive() { return od === 'listo' ? true : conectarOneDrive(); }
 function pendientesOneDrive() {
   let n = 0;
-  for (const p of (db && db.planes) || []) for (const c of Object.values(p.campanas || {})) for (const x of Object.values(c.pdf || {})) if (x && x.pendiente) n++;
+  for (const p of (db && db.planes) || []) for (const c of Object.values(p.campanas || {})) for (const x of [...Object.values(c.pdf || {}), ...Object.values(c.informes || {})]) if (x && x.pendiente) n++;
   return n;
 }
 function bannerOneDrive() {
@@ -225,10 +228,12 @@ async function procesarPendientes() {
       const m = x.meta || {};
       const blob = await NUBE.leerPdf(x.id);
       const ruta = await ALM.guardarPDF(m.carpeta || 'Sin carpeta', x.nombre, blob);
+      if (m.tipo === 'informe') await ALM.guardarEnRaiz(CARPETA_INFORMES, x.nombre, blob);
       await NUBE.borrarPdf(x.id);
       commit((d) => {
         const p = d.planes.find((q) => q.id === m.planId);
-        const reg = p && p.campanas && p.campanas[m.camp] && p.campanas[m.camp].pdf && p.campanas[m.camp].pdf[m.modo];
+        const c = p && p.campanas && p.campanas[m.camp];
+        const reg = c && (m.tipo === 'informe' ? c.informes && c.informes[m.mes] : c.pdf && c.pdf[m.modo]);
         if (reg && reg.pendiente && (!reg.pdfId || reg.pdfId === x.id)) { reg.pendiente = false; reg.ruta = ruta; }
       }, { render: false });
       n++;
@@ -268,12 +273,15 @@ function renderAll() {
     $('#nProd').textContent = db.productos.length || '';
     const conAlto = db.planes.filter((p) => avisosDe(p).some((a) => a.nivel === 'alto')).length;
     $('#nAvisos').textContent = conAlto || '';
+    $('#nInf').textContent = contarInformes().pendientes || '';
   }
   $$('.nav').forEach((b) => { b.setAttribute('aria-current', b.dataset.vista === ui.vista ? 'page' : 'false'); b.onclick = () => { ui.vista = b.dataset.vista; renderAll(); }; });
   const v = $('#view');
   if (!listo) { v.innerHTML = pantallaConexion(); enlazarConexion(); return; }
   if (ui.vista !== 'ajustes' && od === 'pedir-permiso' && pendientesOneDrive() && $('#banner').hidden) bannerOneDrive();
   if (ui.vista === 'planes') renderPlanes(v);
+  else if (ui.vista === 'informes') renderInformes(v);
+  else if (ui.vista === 'textos') renderTextos(v);
   else if (ui.vista === 'analiticas') renderAnaliticas(v);
   else if (ui.vista === 'avisos') renderAvisos(v);
   else if (ui.vista === 'repartos') renderRepartos(v);
@@ -998,6 +1006,8 @@ function tabFert(el, p, camp) {
   for (const l of m.lineas) (porT[l.tanqueFinal] = porT[l.tanqueFinal] || []).push(l);
   const resumenT = Object.keys(porT).sort((a, b) => (a[0] === 'E') - (b[0] === 'E') || a.localeCompare(b, 'es', { numeric: true })).map((t) => `<div class="tanque"><b>${t === '1' || t === '2' ? 'Tanque ' + t : t}</b>${porT[t].map((l) => `<span>${esc(l.prod ? l.prod.nombre : l.nombre)} · ${fmt(l.porRiegoFinca, 2)} ${l.liquido ? 'L' : 'kg'}/riego${l.periodo ? ' · ' + esc(l.periodo) : ''}</span>`).join('')}</div>`).join('');
   const sol = FERT.solucion(p, camp, i, m, anal(p.analAgua), cfg());
+  const cal = FERT.calendario(p, camp, ui.camp, i);
+  const inf = camp.informes && camp.informes[i];
   const rango = (x, r) => (x == null ? '–' : `<span class="${x < r[0] || x > r[1] ? 'chip amb' : 'chip v'}">${fmt(x, 0)} %</span> <span class="muted small">${r[0]}-${r[1]}</span>`);
   el.innerHTML = `<div class="meses">${chips}</div>
     <div class="grid2" style="margin-top:12px">
@@ -1006,6 +1016,7 @@ function tabFert(el, p, camp) {
         ${!obj ? '<p class="small muted">Sin objetivo: elige el tipo de reparto y las necesidades en «Necesidades y reparto».</p>' : ''}</div>
       <div><h3>Riego de ${CALC.MESES[i].toLowerCase()}</h3>
         <div class="row small"><span class="chip">${rg.n || 0} riegos de ${hhmm(rg.h) || '0:00'} h</span><span class="chip">${fmt(rg.vApl, 0)} m³/ha</span><span class="chip">${fmt(rg.vFinca, 0)} m³ en la finca</span></div>
+        ${htmlCalendario(p, cal, rg)}
         <div class="tanques" style="margin-top:10px">${resumenT || '<p class="muted small">Sin productos este mes.</p>'}</div></div></div>
     <h3 style="margin-top:16px">Productos</h3>
     <datalist id="periodosL">${FERT.PERIODOS.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
@@ -1019,6 +1030,10 @@ function tabFert(el, p, camp) {
       <button class="btn peq p" id="fAjus" ${obj && m.lineas.length ? '' : 'disabled'}>Ajustar al objetivo</button>
       <button class="btn peq" id="fTq" ${m.lineas.some((l) => !l.tanqueAuto) ? '' : 'disabled'}>Tanques automáticos</button>
       <span class="spacer"></span><button class="btn peq rojo" id="fVac" ${m.lineas.length ? '' : 'disabled'}>Vaciar mes</button></div>
+    <label class="fld" style="margin-top:14px"><span>Observaciones de ${CALC.MESES[i].toLowerCase()} (salen en el informe, antes del ácido de limpieza y los recintos)</span><textarea id="fObs" rows="2" placeholder="p. ej. Revisar filtros antes del primer riego">${esc(fm.obs || '')}</textarea></label>
+    <div class="row" style="margin-top:12px"><button class="btn" id="fInf">Informe PDF de ${CALC.MESES[i].toLowerCase()}</button>
+      <label class="chk small"><input type="checkbox" id="fRev" ${inf && inf.revisado ? 'checked' : ''}> Revisado</label>
+      <span class="small muted">${inf && inf.fecha ? `Último PDF: ${fechaEs(inf.fecha)}${inf.pendiente ? ' · pendiente de pasar a OneDrive' : ''}` : 'Aún sin PDF de este mes'}</span></div>
     <details style="margin-top:16px" ${ui.verSol ? 'open' : ''} id="fSolD"><summary class="small" style="cursor:pointer"><b>Solución nutritiva de ${CALC.MESES[i].toLowerCase()}</b> <span class="muted">(solo para ti, para ajustar la nutrición)</span></summary>
       ${sol ? `<div class="grid2" style="margin-top:10px">
         <div><table class="t"><tr><th>Ion</th><th class="n">meq/L</th></tr>${[['NO3-', 'no3'], ['NH4+', 'nh4'], ['H2PO4-', 'h2po4'], ['K+', 'k'], ['Ca2+', 'ca'], ['Mg2+', 'mg'], ['SO4 2-', 'so4'], ['Na+', 'na'], ['Cl-', 'cl'], ['HCO3-', 'hco3']].map(([t, k]) => `<tr><td>${t}</td><td class="n">${fmt(sol.meq[k], 2)}</td></tr>`).join('')}
@@ -1042,6 +1057,10 @@ function tabFert(el, p, camp) {
   }));
   $$('[data-fdel]', el).forEach((b) => { b.onclick = () => guardarLineas((ls) => ls.splice(+b.dataset.fdel, 1)); });
   $('#fSolD', el).ontoggle = (e) => { ui.verSol = e.target.open; };
+  enlazarCalendario(el, p, camp, i, cal);
+  $('#fObs', el).onchange = (e) => { commit(() => { camp.fert = camp.fert || {}; camp.fert[i] = camp.fert[i] || { lineas: [] }; camp.fert[i].obs = e.target.value.trim(); }, { render: false }); };
+  $('#fRev', el).onchange = (e) => { commit(() => { marcarRevisado(camp, i, e.target.checked); }, { render: false }); renderEstado(); };
+  $('#fInf', el).onclick = async (e) => { e.target.disabled = true; await generarInforme(p, ui.camp, i); renderDetalleSoloCuerpo(); };
   $('#fAdd', el).onclick = () => guardarLineas((ls) => ls.push({ prodId: null, nombre: '', dosis: 0, formato: 'pie', riegos: rg.n || 0, periodo: 'Resto mes', tanque: null }));
   if ($('#fAnt', el)) $('#fAnt', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(p.campanas[ant].fert[i].lineas)); }); toast(`Copiado ${CALC.MESES[i].toLowerCase()} de ${ant}`); };
   if ($('#fPrev', el)) $('#fPrev', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rg.n || l.riegos) : l.riegos }))); }); };
@@ -1060,6 +1079,266 @@ function tabFert(el, p, camp) {
     $('#ajOk', md).onclick = () => { cerrarModal(); guardarLineas((ls) => { for (const [k, d] of Object.entries(r.dosis)) ls[+k].dosis = d; }); toast('Dosis ajustadas'); };
   };
 }
+
+/* ----- Calendario de riego del mes (en la pestaña Fertirrigación) ----- */
+const DIAS_SEM = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+function htmlCalendario(p, cal, rg) {
+  const pt = p.patron || { modo: 'auto', dias: [], quincena: 'ambas' };
+  const set = new Set(cal.dias);
+  let celdas = DIAS_SEM.map((d, k) => `<span class="cal-h ${k >= 5 ? 'fin' : ''}">${d}</span>`).join('');
+  for (let k = 0; k < cal.primerDia; k++) celdas += '<span></span>';
+  for (let d = 1; d <= cal.total; d++) { const dw = (cal.primerDia + d - 1) % 7; celdas += `<button class="cal-d ${set.has(d) ? 'on' : ''} ${dw >= 5 ? 'fin' : ''}" data-dia="${d}" title="Pulsa para poner o quitar el riego">${d}</button>`; }
+  const n = rg.n || 0;
+  return `<div class="cal-box">
+    <div class="cal">${celdas}</div>
+    <div class="cal-ctl">
+      <label class="fld"><span>Patrón de esta finca</span><select id="cPat">${[['auto', 'Repartir los riegos del mes'], ['semana', 'Días fijos de la semana'], ['todos', 'Todos los días'], ['ninguno', 'Ninguno']].map(([v, t]) => `<option value="${v}" ${(pt.modo || 'auto') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      ${pt.modo === 'semana' ? `<div class="dsem">${DIAS_SEM.map((d, k) => `<button data-ds="${k}" aria-pressed="${(pt.dias || []).includes(k)}">${d}</button>`).join('')}</div>` : ''}
+      <label class="fld"><span>Quincena</span><select id="cQ">${[['ambas', 'Todo el mes'], ['1', 'Solo la 1ª quincena'], ['2', 'Solo la 2ª quincena']].map(([v, t]) => `<option value="${v}" ${(pt.quincena || 'ambas') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <div class="qrow"><span>1ª quincena</span><button class="btn peq" data-q="1" data-dd="-1">−1</button><button class="btn peq" data-q="1" data-dd="1">+1</button></div>
+      <div class="qrow"><span>2ª quincena</span><button class="btn peq" data-q="2" data-dd="-1">−1</button><button class="btn peq" data-q="2" data-dd="1">+1</button></div>
+      ${cal.manual ? '<button class="btn peq" id="cRes" title="Quita los cambios a mano de este mes">Volver al patrón</button>' : ''}
+    </div></div>
+    ${cal.dias.length !== n ? `<div class="aviso" style="margin-top:8px"><span>Marcados ${plural(cal.dias.length, 'día', 'días')} y el mes tiene ${plural(n, 'riego', 'riegos')}.</span><span class="spacer"></span><button class="btn peq" id="cAjN">Poner ${cal.dias.length} riegos</button></div>` : ''}`;
+}
+function enlazarCalendario(el, p, camp, i, cal) {
+  const setCal = (dias) => { commit(() => { camp.cal = camp.cal || {}; camp.cal[i] = dias; }, { render: false }); renderDetalleSoloCuerpo(); };
+  const setPat = (fn) => { commit(() => { p.patron = { modo: 'auto', dias: [], quincena: 'ambas', ...(p.patron || {}) }; fn(p.patron); }, { render: false }); renderDetalleSoloCuerpo(); };
+  $$('[data-dia]', el).forEach((b) => { b.onclick = () => { const d = +b.dataset.dia; setCal(cal.dias.includes(d) ? cal.dias.filter((x) => x !== d) : [...cal.dias, d].sort((a, c) => a - c)); }; });
+  $$('[data-dd]', el).forEach((b) => { b.onclick = () => setCal(+b.dataset.dd > 0 ? FERT.masDia(cal.dias, ui.camp, i, b.dataset.q) : FERT.menosDia(cal.dias, ui.camp, i, b.dataset.q)); });
+  $$('[data-ds]', el).forEach((b) => { b.onclick = () => setPat((pt) => { const k = +b.dataset.ds; pt.dias = pt.dias.includes(k) ? pt.dias.filter((x) => x !== k) : [...pt.dias, k].sort(); }); });
+  $('#cPat', el).onchange = (e) => setPat((pt) => { pt.modo = e.target.value; });
+  $('#cQ', el).onchange = (e) => setPat((pt) => { pt.quincena = e.target.value; });
+  if ($('#cRes', el)) $('#cRes', el).onclick = () => { commit(() => { delete camp.cal[i]; }, { render: false }); renderDetalleSoloCuerpo(); };
+  if ($('#cAjN', el)) $('#cAjN', el).onclick = () => { commit(() => { camp.riego = camp.riego || CALC.MESES.map(() => ({ h: 0, n: 0 })); camp.riego[i] = { ...(camp.riego[i] || { h: 0, n: 0 }), n: cal.dias.length }; }, { render: false }); renderDetalleSoloCuerpo(); toast('Nº de riegos cambiado: revisa los riegos de cada producto'); };
+}
+
+/* ---------- INFORME MENSUAL ---------- */
+const CARPETA_INFORMES = 'Planes de abonado';
+const claveMes = (camp, i) => `${camp}-${String(i + 1).padStart(2, '0')}`;
+function marcarRevisado(camp, i, si) { camp.informes = camp.informes || {}; camp.informes[i] = { ...(camp.informes[i] || {}), revisado: !!si }; }
+function datosInforme(p, campKey, i) {
+  const camp = p.campanas[campKey];
+  const ix = ixProd();
+  const m = FERT.mes(p, camp, i, ix);
+  const r = CALC.riego(p, camp, cfg()), rg = r.filas[i];
+  const A = analDePlan(p);
+  const b = CALC.balanceN(p, camp, A, 'estimado', cfg());
+  const uf12 = CALC.MESES.map((_, k) => FERT.mes(p, camp, k, ix).uf);
+  const sup = +p.superficie || 0;
+  const lineas = m.lineas.map((l) => ({ nombre: l.prod ? l.prod.nombre : l.nombre, porPie: l.porPie, porRiego: l.porRiegoFinca, riegos: l.riegos, periodo: l.periodo, tanque: l.tanqueFinal, liquido: l.liquido, total: l.w * sup }));
+  const tot = new Map();
+  for (const l of lineas) { const k = l.nombre; const t = tot.get(k) || { nombre: k, total: 0, u: l.liquido ? 'L' : 'kg' }; t.total += l.total; tot.set(k, t); }
+  const t = db.textos[claveMes(campKey, i)] || {};
+  const acum = [0, 1, 2].map((j) => uf12.slice(0, i + 1).reduce((s, x) => s + (+x[j] || 0), 0));
+  const total = [0, 1, 2].map((j) => uf12.reduce((s, x) => s + (+x[j] || 0), 0));
+  const pie = db.config.pie || {};
+  return {
+    plan: p, anio: campKey, mes: i, logo: logoCache, cliente: p.titular || p.cliente, cultivo: p.cultivo || p.tipoCultivo,
+    riego: { n: rg.n || 0, h: rg.h || 0 }, cal: FERT.calendario(p, camp, campKey, i), arboles: p.arboles, superficie: p.superficie, vulnerable: !!p.vulnerable,
+    lineas, totales: [...tot.values()], ufMes: m.uf, aguaMes: rg.vFinca, aguaAnio: r.totFinca,
+    obs: (camp.fert && camp.fert[i] && camp.fert[i].obs) || '', acido: FERT.acidoLimpieza(p, A.agua), recintos: p.recintos || '',
+    textos: { fito: (t.fito || {})[p.grupo] || '', general: t.general || '' },
+    vistazo: {
+      uf12, agua12: r.filas.map((f) => f.vApl || 0), nAcum: acum, nTotal: total,
+      origenN: { suelo: (b.E1 || 0) + (b.E2 || 0), agua: b.E4 || 0, estiercol: b.E3 || 0, abono: Math.max(0, b.aporte || 0) },
+      dentroLimite: !b.excede && !b.excedeOrg,
+      analSuelo: A.suelo && !A.suelo.plantilla ? A.suelo.fecha : null, analAgua: A.agua && !A.agua.plantilla ? A.agua.fecha : null
+    },
+    pie: { texto: pie.texto || '', telefono: pie.telefono || '', email: pie.email || '' }
+  };
+}
+const nombreInforme = (p, campKey, i) => `${p.nombre} ${CALC.MESES[i]} ${campKey}.pdf`;
+/* Crea el PDF del mes. En el ordenador: carpeta del cliente + copia en «Planes de abonado». En la tablet: queda en Drive hasta que el ordenador lo pase. */
+async function generarInforme(p, campKey, i, { abrir = true, silencio = false } = {}) {
+  const camp = p.campanas && p.campanas[campKey]; if (!camp) return false;
+  try {
+    const blob = PDF.informe(datosInforme(p, campKey, i));
+    const nombre = nombreInforme(p, campKey, i);
+    const carpeta = p.carpeta || ((p.cliente || 'Sin cliente') + '/' + (p.finca || 'Sin finca'));
+    const reg = { fecha: new Date().toISOString(), ruta: null, pendiente: false, pdfId: null };
+    if (od === 'listo' || (od === 'pedir-permiso' && await ALM.reconectar().catch(() => false))) {
+      od = 'listo';
+      reg.ruta = await ALM.guardarPDF(carpeta, nombre, blob);
+      await ALM.guardarEnRaiz(CARPETA_INFORMES, nombre, blob);
+      if (!silencio) toast('Informe guardado en ' + reg.ruta + ' y en ' + CARPETA_INFORMES);
+    } else {
+      if (offline) { if (abrir) verPdf(blob, nombre); if (!silencio) toast('Sin conexión: el informe no se ha guardado en Drive. Vuelve a sacarlo con conexión.', true); return false; }
+      reg.pendiente = true;
+      reg.pdfId = await NUBE.subirPdf(nombre, blob, { tipo: 'informe', carpeta, planId: p.id, camp: campKey, mes: i });
+      if (!silencio) toast('Informe listo. Se guardará en OneDrive la próxima vez que abras la app en el ordenador');
+    }
+    if (abrir) verPdf(blob, nombre);
+    commit(() => { camp.informes = camp.informes || {}; camp.informes[i] = { ...(camp.informes[i] || {}), ...reg, revisado: true }; }, { render: false });
+    return true;
+  } catch (e) { if (!silencio) toast('No se pudo crear el informe: ' + (e.message || e), true); else throw e; return false; }
+}
+function mesInforme() {
+  const hoy = new Date();
+  if (String(hoy.getFullYear()) !== String(ui.camp)) return 0;
+  return hoy.getDate() >= 15 ? Math.min(11, hoy.getMonth() + 1) : hoy.getMonth();
+}
+/* Estado de cada plan para el informe del mes */
+function estadoInforme(p, i) {
+  const camp = campDe(p);
+  if (!camp) return { sinCamp: true, avisos: ['Sin campaña ' + ui.camp], nivel: 'alto' };
+  const ix = ixProd();
+  const m = FERT.mes(p, camp, i, ix);
+  const rg = CALC.riego(p, camp, cfg()).filas[i];
+  const cal = FERT.calendario(p, camp, ui.camp, i);
+  const rep = db.repartos.find((r) => r.id === p.reparto) || null;
+  const nc = CALC.necesidades(p, camp, analDePlan(p), cfg(), rep);
+  const obj = nc.mensual ? nc.mensual[i][0] : null;
+  const inf = (camp.informes && camp.informes[i]) || {};
+  const av = [];
+  if (!m.lineas.length) av.push('Sin productos');
+  if (m.sinProducto) av.push(plural(m.sinProducto, 'producto sin dar de alta', 'productos sin dar de alta'));
+  if (!(rg.n > 0)) av.push('Sin riegos');
+  if (rg.n > 0 && cal.dias.length !== rg.n) av.push(`Calendario: ${cal.dias.length} días para ${rg.n} riegos`);
+  if (obj && m.lineas.length && Math.abs(m.uf[0] - obj) / obj > 0.15) av.push(`N ${fmt(m.uf[0] / obj * 100, 0)} % del objetivo`);
+  if (!p.mxCli) av.push('Sin enlazar con el maestro');
+  return { camp, m, rg, cal, obj, inf, avisos: av, nivel: !m.lineas.length || !(rg.n > 0) ? 'alto' : av.length ? 'medio' : 'ok' };
+}
+function contarInformes() {
+  if (!db) return { pendientes: 0 };
+  const i = ui.infMes == null ? mesInforme() : ui.infMes;
+  let pendientes = 0;
+  for (const p of db.planes) { const c = campDe(p); const inf = c && c.informes && c.informes[i]; if (c && inf && inf.revisado && !inf.fecha) pendientes++; }
+  return { pendientes };
+}
+function prepararMes(i) {
+  let deAnt = 0, dePrev = 0, nada = 0;
+  commit((d) => {
+    for (const p of d.planes) {
+      const camp = p.campanas && p.campanas[ui.camp]; if (!camp) continue;
+      if (camp.fert && camp.fert[i] && camp.fert[i].lineas && camp.fert[i].lineas.length) continue;
+      const ant = campAnteriorCon(p, i);
+      const rgN = (camp.riego && camp.riego[i] && camp.riego[i].n) || 0;
+      camp.fert = camp.fert || {};
+      if (ant) { camp.fert[i] = { ...(camp.fert[i] || {}), lineas: structuredClone(p.campanas[ant].fert[i].lineas) }; deAnt++; }
+      else if (i > 0 && camp.fert[i - 1] && camp.fert[i - 1].lineas && camp.fert[i - 1].lineas.length) {
+        camp.fert[i] = { ...(camp.fert[i] || {}), lineas: structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rgN || l.riegos) : l.riegos })) }; dePrev++;
+      } else nada++;
+    }
+  });
+  return { deAnt, dePrev, nada };
+}
+
+/* ---------- INFORMES (lista del mes) ---------- */
+function renderInformes(v) {
+  if (ui.infMes == null) ui.infMes = mesInforme();
+  const i = ui.infMes, mesTxt = CALC.MESES[i].toLowerCase();
+  const filas = db.planes.map((p) => ({ p, e: estadoInforme(p, i) }));
+  const conCamp = filas.filter((x) => !x.e.sinCamp);
+  const nRev = conCamp.filter((x) => x.e.inf.revisado).length, nPdf = conCamp.filter((x) => x.e.inf.fecha).length;
+  const nProd = conCamp.filter((x) => x.e.m.lineas.length).length;
+  const t = db.textos[claveMes(ui.camp, i)] || {};
+  const gruposUsados = [...new Set(conCamp.map((x) => x.p.grupo))];
+  const faltanTxt = [!(t.general || '').trim() ? 'situación actual' : null, ...gruposUsados.filter((g) => !((t.fito || {})[g] || '').trim()).map((g) => 'fitosanitaria de ' + g.toLowerCase())].filter(Boolean);
+  const q = CALC.norm(ui.infQ);
+  const lista = filas.filter(({ p, e }) => {
+    if (q && !CALC.norm([p.nombre, p.cliente, p.finca].join(' ')).includes(q)) return false;
+    if (ui.infFiltro === 'pend' && e.inf && e.inf.revisado) return false;
+    if (ui.infFiltro === 'rev' && !(e.inf && e.inf.revisado && !e.inf.fecha)) return false;
+    if (ui.infFiltro === 'avisos' && (e.sinCamp || e.nivel === 'ok')) return false;
+    return true;
+  }).sort((a, b) => (a.p.cliente || '').localeCompare(b.p.cliente || '', 'es') || (a.p.nombre || '').localeCompare(b.p.nombre || '', 'es'));
+  const chips = CALC.MESES.map((mm, k) => `<button class="mes-chip ${k === i ? 'on' : ''}" data-im="${k}">${mm.slice(0, 3)}</button>`).join('');
+  const estadoPdf = (inf) => (inf.fecha ? `<span class="chip ${inf.pendiente ? 'amb' : 'v'}" title="${esc(inf.ruta || 'Pendiente de pasar a OneDrive')}">${fechaEs(inf.fecha)}${inf.pendiente ? ' · en Drive' : ''}</span>` : '<span class="muted small">–</span>');
+  const filtros = [['todos', 'Todos'], ['pend', 'Sin revisar'], ['rev', 'Revisados sin PDF'], ['avisos', 'Con avisos']];
+  v.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Informes de ${esc(mesTxt)} ${esc(ui.camp)}</h2><span class="spacer"></span>
+      <button class="btn" id="iPrep" title="Copia el mismo mes de la campaña anterior (o el mes anterior) en los planes que aún no tienen productos este mes">Preparar ${esc(mesTxt)}</button>
+      <button class="btn" id="iTxt">Textos del mes</button>
+      <button class="btn p" id="iGen" ${filas.some((x) => !x.e.sinCamp && x.e.inf.revisado) ? '' : 'disabled'}>Generar PDF de los revisados</button></div>
+    <div class="meses" style="margin-top:12px">${chips}</div>
+    <div class="kpis" style="margin-top:12px">
+      <div class="kpi"><span>Con productos</span><strong>${nProd} <small>de ${conCamp.length}</small></strong></div>
+      <div class="kpi"><span>Revisados</span><strong>${nRev} <small>de ${conCamp.length}</small></strong></div>
+      <div class="kpi"><span>PDF hechos</span><strong>${nPdf}</strong></div>
+      <div class="kpi ${faltanTxt.length ? 'amb' : ''}"><span>Textos del mes</span><strong>${faltanTxt.length ? 'Faltan' : 'Listos'}</strong></div></div>
+    ${faltanTxt.length ? `<div class="aviso" style="margin-top:10px">Faltan los textos de ${esc(mesTxt)}: ${esc(faltanTxt.join(', '))}. Sin ellos, la página 2 sale sin ese bloque.</div>` : ''}
+    <div class="row" style="margin-top:14px"><input id="iq" type="search" placeholder="Buscar plan, cliente, finca…" value="${esc(ui.infQ)}" style="flex:1;max-width:340px" class="cell izq">
+      <div class="filtros">${filtros.map(([k, tt]) => `<button data-if="${k}" aria-pressed="${ui.infFiltro === k}">${tt}</button>`).join('')}</div>
+      <span class="spacer"></span><button class="btn peq" id="iRevT" title="Marca como revisados los que se ven y no tienen avisos graves">Marcar revisados los de la lista</button></div>
+    <div class="scroll-x" style="margin-top:10px"><table class="t inf"><tr><th></th><th>Plan</th><th class="n">Productos</th><th class="n">N mes</th><th>Riego</th><th>Avisos</th><th>Revisado</th><th>PDF</th><th></th></tr>
+    ${lista.map(({ p, e }) => e.sinCamp ? `<tr class="muted"><td><span class="dot alto"></span></td><td><b>${esc(p.nombre)}</b><div class="small">${esc(p.cliente)}</div></td><td colspan="7" class="small">Sin campaña ${esc(ui.camp)}</td></tr>`
+      : `<tr><td><span class="dot ${e.nivel}"></span></td><td><b>${esc(p.nombre)}</b><div class="small muted">${esc(p.cliente)} · ${esc(p.finca)}</div></td>
+        <td class="n">${e.m.lineas.length || '<span class="muted">0</span>'}</td>
+        <td class="n">${fmt(e.m.uf[0], 1)}${e.obj ? `<div class="small muted">obj. ${fmt(e.obj, 1)}</div>` : ''}</td>
+        <td class="small">${e.rg.n || 0} × ${hhmm(e.rg.h) || '0:00'} h</td>
+        <td class="small">${e.avisos.map(esc).join('<br>') || '<span class="muted">–</span>'}</td>
+        <td><input type="checkbox" data-irev="${p.id}" ${e.inf.revisado ? 'checked' : ''} aria-label="Revisado"></td>
+        <td>${estadoPdf(e.inf)}</td>
+        <td class="nw"><button class="btn peq" data-iab="${p.id}">Abrir</button> <button class="btn peq" data-ipdf="${p.id}">PDF</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Ningún plan con ese filtro.</td></tr>'}</table></div>
+    <p class="small muted" style="margin-top:10px">Los PDF se guardan como <code>Clientes/&lt;carpeta&gt;/Planes de abonado/&lt;plan&gt; ${esc(CALC.MESES[i])} ${esc(ui.camp)}.pdf</code> y una copia en <code>${esc(CARPETA_INFORMES)}</code>. En la tablet quedan en Drive y el ordenador los pasa solos. Asesor marca como enviado el mes de los clientes con todos sus planes generados.</p></div>`;
+  $$('[data-im]', v).forEach((b) => { b.onclick = () => { ui.infMes = +b.dataset.im; renderAll(); }; });
+  const iq = $('#iq', v); iq.oninput = () => { ui.infQ = iq.value; const pos = iq.selectionStart; renderInformes(v); const n = $('#iq'); n.focus(); n.setSelectionRange(pos, pos); };
+  $$('[data-if]', v).forEach((b) => { b.onclick = () => { ui.infFiltro = b.dataset.if; renderInformes(v); }; });
+  $('#iTxt', v).onclick = () => { ui.vista = 'textos'; ui.txtMes = i; renderAll(); };
+  $('#iPrep', v).onclick = () => {
+    if (!confirm(`¿Rellenar ${mesTxt} en los planes que aún no tienen productos este mes? Se copian del mismo mes de la campaña anterior o, si no hay, del mes anterior. No se toca ningún plan que ya tenga productos.`)) return;
+    const r = prepararMes(i);
+    toast(`${r.deAnt} copiados de la campaña anterior, ${r.dePrev} del mes anterior${r.nada ? `, ${r.nada} sin nada que copiar` : ''}`);
+  };
+  $$('[data-irev]', v).forEach((c) => { c.onchange = () => { const p = db.planes.find((x) => x.id === c.dataset.irev); commit(() => marcarRevisado(campDe(p), i, c.checked)); }; });
+  $('#iRevT', v).onclick = () => {
+    const ok = lista.filter(({ e }) => !e.sinCamp && e.nivel !== 'alto' && !e.inf.revisado);
+    if (!ok.length) { toast('No hay ninguno sin revisar sin avisos graves en la lista'); return; }
+    if (!confirm(`¿Marcar como revisados ${plural(ok.length, 'plan', 'planes')}?`)) return;
+    commit(() => { for (const { p } of ok) marcarRevisado(campDe(p), i, true); });
+  };
+  $$('[data-iab]', v).forEach((b) => { b.onclick = () => { ui.planId = b.dataset.iab; ui.tab = 'fert'; ui.mes = i; ui.vista = 'planes'; renderAll(); }; });
+  $$('[data-ipdf]', v).forEach((b) => { b.onclick = async () => { b.disabled = true; await generarInforme(db.planes.find((x) => x.id === b.dataset.ipdf), ui.camp, i); renderAll(); }; });
+  $('#iGen', v).onclick = async () => {
+    const rev = filas.filter((x) => !x.e.sinCamp && x.e.inf.revisado);
+    const nuevos = rev.filter((x) => !x.e.inf.fecha);
+    let lote = nuevos;
+    if (!nuevos.length) { if (!confirm(`Todos los revisados ya tienen PDF. ¿Volver a generar los ${rev.length}?`)) return; lote = rev; }
+    else if (nuevos.length < rev.length && confirm(`${rev.length - nuevos.length} revisados ya tienen PDF. ¿Volver a generarlos también? (Aceptar = todos; Cancelar = solo los ${nuevos.length} nuevos)`)) lote = rev;
+    if (od === 'pedir-permiso') { if (await ALM.reconectar().catch(() => false)) od = 'listo'; }
+    if (od !== 'listo' && offline) { toast('Sin conexión: no se pueden guardar los PDF', true); return; }
+    const md = modal('Generando informes', `<div class="prog"><i></i></div><p class="small muted" id="gTxt"></p>`);
+    const errores = [];
+    for (let k = 0; k < lote.length; k++) {
+      const { p } = lote[k];
+      $('#gTxt', md).textContent = `${k + 1}/${lote.length} · ${p.nombre}`; $('.prog i', md).style.width = ((k + 1) / lote.length * 100) + '%';
+      try { await generarInforme(p, ui.camp, i, { abrir: false, silencio: true }); } catch (e) { errores.push(`${p.nombre}: ${e.message || e}`); }
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    $('.cuerpo', md).innerHTML = `<p><b>${plural(lote.length - errores.length, 'informe generado', 'informes generados')}</b> ${od === 'listo' ? `en la carpeta de cada cliente y en <code>${esc(CARPETA_INFORMES)}</code>` : 'en Drive: el ordenador los pasará a OneDrive'}.</p>${errores.length ? `<p class="rojo small">${errores.map(esc).join('<br>')}</p>` : ''}`;
+    const pie = document.createElement('footer'); pie.innerHTML = '<button class="btn p" data-cerrar>Cerrar</button>'; md.appendChild(pie);
+    $$('[data-cerrar]', md).forEach((b) => { b.onclick = cerrarModal; });
+    renderAll();
+  };
+}
+
+/* ---------- TEXTOS de la página 2 (por mes) ---------- */
+function renderTextos(v) {
+  if (ui.txtMes == null) ui.txtMes = ui.infMes == null ? mesInforme() : ui.infMes;
+  const i = ui.txtMes, k = claveMes(ui.camp, i);
+  const t = db.textos[k] || {};
+  const prevK = i > 0 ? claveMes(ui.camp, i - 1) : claveMes(String(+ui.camp - 1), 11);
+  const prev = db.textos[prevK];
+  const nPorGrupo = Object.fromEntries(CALC.GRUPOS.map((g) => [g, db.planes.filter((p) => p.grupo === g && campDe(p)).length]));
+  const nombreG = { CITRICOS: 'Cítricos', FRUTALES: 'Frutales', ALMENDRO: 'Almendro', OLIVOS: 'Olivos' };
+  const chips = CALC.MESES.map((mm, j) => { const tt = db.textos[claveMes(ui.camp, j)]; const lleno = tt && ((tt.general || '').trim() || Object.values(tt.fito || {}).some((x) => (x || '').trim())); return `<button class="mes-chip ${j === i ? 'on' : ''}" data-tm="${j}">${mm.slice(0, 3)}${lleno ? '<i></i>' : ''}</button>`; }).join('');
+  v.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Textos del informe · ${esc(CALC.MESES[i].toLowerCase())} ${esc(ui.camp)}</h2><span class="spacer"></span>
+      ${prev ? `<button class="btn peq" id="tCop">Copiar los de ${esc(CALC.MESES[i > 0 ? i - 1 : 11].toLowerCase())}</button>` : ''}<button class="btn peq" id="tInf">Ver informes del mes</button></div>
+    <p class="small muted">Salen en la página 2 del informe de cada plan: la información fitosanitaria según el grupo de cultivo del plan y la situación actual para todos. Se guardan solos al salir de cada cuadro.</p>
+    <div class="meses">${chips}</div>
+    <label class="fld" style="margin-top:14px"><span><b>Situación actual y novedades</b> · para todos los planes</span><textarea data-tx="general" rows="6" placeholder="Cómo viene la campaña, el tiempo, novedades del sector, cambios de normativa…">${esc(t.general || '')}</textarea></label>
+    <h3 style="margin-top:18px">Información fitosanitaria</h3>
+    <div class="grid2">${CALC.GRUPOS.map((g) => `<label class="fld"><span><b>${nombreG[g] || g}</b> · ${plural(nPorGrupo[g], 'plan', 'planes')}</span><textarea data-tx="fito.${g}" rows="6" placeholder="${nPorGrupo[g] ? 'Plagas y enfermedades del momento, umbrales, tratamientos recomendados…' : 'Ningún plan de este grupo'}">${esc((t.fito || {})[g] || '')}</textarea></label>`).join('')}</div></div>`;
+  $$('[data-tm]', v).forEach((b) => { b.onclick = () => { ui.txtMes = +b.dataset.tm; renderTextos(v); }; });
+  $$('[data-tx]', v).forEach((ta) => { ta.onchange = () => { commit((d) => { const o = d.textos[k] = d.textos[k] || { general: '', fito: {} }; o.fito = o.fito || {}; const r = ta.dataset.tx; if (r === 'general') o.general = ta.value.trim(); else o.fito[r.split('.')[1]] = ta.value.trim(); }, { render: false }); renderTextosChips(v); }; });
+  $('#tInf', v).onclick = () => { ui.vista = 'informes'; ui.infMes = i; renderAll(); };
+  if ($('#tCop', v)) $('#tCop', v).onclick = () => {
+    const lleno = (t.general || '').trim() || Object.values(t.fito || {}).some((x) => (x || '').trim());
+    if (lleno && !confirm('¿Sustituir los textos de este mes por los del mes anterior?')) return;
+    commit((d) => { d.textos[k] = structuredClone(prev); }); toast('Textos copiados: revísalos y cambia lo que haga falta');
+  };
+}
+function renderTextosChips(v) { const i = ui.txtMes, tt = db.textos[claveMes(ui.camp, i)]; const b = $(`[data-tm="${i}"]`, v); if (b) b.innerHTML = CALC.MESES[i].slice(0, 3) + (tt && ((tt.general || '').trim() || Object.values(tt.fito || {}).some((x) => (x || '').trim())) ? '<i></i>' : ''); }
 
 /* ---------- PRODUCTOS ---------- */
 const RUTA_PRODUCTOS = 'Cuaderno de campo/Calculadoras Excel/Base de datos/Productos Gestion fertirrigacion.xlsx';
@@ -1163,7 +1442,7 @@ function nuevoPlan() {
     const base = db.planes.find((p) => p.id === $('#nCop', m).value);
     const p = base ? structuredClone(base) : { marco: { filas: null, arboles: null }, copa: null, caudal: null, emisores: null, lineas: 1, textura: 'Franco', kc: null, analSuelo: null, analAgua: null, superficie: null, arboles: null, recintos: '', vulnerable: false, campoCartagena: false, titular: cliente, campanas: {} };
     Object.assign(p, { id: uid('p'), origen: null, cliente, finca, carpeta: cliente + '/' + finca, tipoCultivo: tipo, grupo: cult ? cult.grupo : (base ? base.grupo : 'CITRICOS'), cultivo: tipo, nombre: $('#nNom', m).value.trim() || `${cliente} ${tipo} ${finca}`, mxCli: null, mxFin: null });
-    if (base) { const k = Object.keys(base.campanas || {}).sort().slice(-1)[0]; p.campanas = {}; if (k) { p.campanas[ui.camp] = structuredClone(base.campanas[k]); Object.assign(p.campanas[ui.camp], { ufAplicadas: CALC.MESES.map(() => [0, 0, 0, 0, 0]), estiercoles: [], pdf: {}, excel: null, produccionReal: null, dosisRealM3: null }); } }
+    if (base) { const k = Object.keys(base.campanas || {}).sort().slice(-1)[0]; p.campanas = {}; if (k) { p.campanas[ui.camp] = structuredClone(base.campanas[k]); Object.assign(p.campanas[ui.camp], { ufAplicadas: CALC.MESES.map(() => [0, 0, 0, 0, 0]), estiercoles: [], pdf: {}, informes: {}, cal: {}, excel: null, produccionReal: null, dosisRealM3: null }); } }
     if (!p.campanas[ui.camp]) crearCampana(p, ui.camp);
     if (!p.reparto) { const r = db.repartos.find((x) => x.grupo === p.grupo); if (r) p.reparto = r.id; }
     p.campanaActual = ui.camp;
@@ -1231,7 +1510,10 @@ function renderAjustes(v) {
       <div class="row" style="margin-top:10px"><button class="btn" id="aMxOk">Probar y leer</button>${IX ? `<button class="btn" id="aMxEnl">Enlazar planes por nombre</button><span class="small muted">${mxData.clientes.length} clientes · ${mxData.fincas.length} fincas · ${sinEnlace} planes sin enlazar</span>` : ''}</div></div>
     <div class="card"><h3>Informe PDF</h3>
       <div class="row">${logoCache ? `<img src="${logoCache}" alt="Logo" style="height:42px;border:1px solid var(--line);border-radius:6px;padding:3px;background:#fff">` : '<span class="small muted">Sin logo (se toma del primer Excel al importar).</span>'}<label class="btn peq">Cambiar logo<input type="file" id="aLogo" accept="image/png,image/jpeg" hidden></label></div>
-      <label class="fld" style="margin-top:10px"><span>Pie del informe</span><input id="aAutor" value="${esc(c.autor || '')}"></label></div>
+      <label class="fld" style="margin-top:10px"><span>Pie del PDF del balance de N</span><input id="aAutor" value="${esc(c.autor || '')}"></label>
+      <label class="fld" style="margin-top:10px"><span>Texto del pie del informe mensual (página 2)</span><textarea id="aPieT" rows="4">${esc((c.pie || {}).texto || '')}</textarea></label>
+      <div class="grid2" style="margin-top:10px"><label class="fld"><span>Teléfono</span><input id="aPieTel" value="${esc((c.pie || {}).telefono || '')}" inputmode="tel"></label><label class="fld"><span>Email</span><input id="aPieMail" value="${esc((c.pie || {}).email || '')}" inputmode="email"></label></div>
+      <p class="small muted">Se guardan en tus datos de Drive, no en el código de la app.</p></div>
     <div class="card"><h3>Copia de seguridad</h3><div class="row"><button class="btn" id="aExp">Descargar copia (.json)</button><label class="btn">Restaurar copia…<input type="file" id="aRes" accept=".json,application/json" hidden></label></div></div>
   </div>
   <div>
@@ -1276,6 +1558,9 @@ function renderAjustes(v) {
   if (enl) enl.onclick = () => { let n = 0; commit((d) => { for (const p of d.planes) if (!p.mxFin && enlazarPlan(p, false)) n++; }); toast(`Enlazados ${plural(n, 'plan', 'planes')} más`); };
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
+  $('#aPieT').onchange = (e) => commit((d) => { d.config.pie.texto = e.target.value.trim(); }, { render: false });
+  $('#aPieTel').onchange = (e) => commit((d) => { d.config.pie.telefono = e.target.value.trim(); }, { render: false });
+  $('#aPieMail').onchange = (e) => commit((d) => { d.config.pie.email = e.target.value.trim(); }, { render: false });
   $('#aExp').onclick = () => { const b = new Blob([JSON.stringify(db, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `planes-abonado-copia-${new Date().toISOString().slice(0, 10)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); };
   $('#aRes').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;

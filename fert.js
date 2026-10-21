@@ -188,6 +188,64 @@
     return out;
   }
 
-  const api = { RIQ, NUT, PERIODOS, indice, prodDe, familiaPorNombre, productosDesdeFilas, tanquesHabituales, tanques, cantidad, mes, hayFert, ufCampana, solucion, ajustar, fertDesdeExcel, arbHaReal };
+
+  /* ---------- Calendario de riego del mes (fase 4) ----------
+     plan.patron = { modo: 'auto' | 'semana' | 'todos' | 'ninguno', dias: [0..6] (0 = lunes), quincena: 'ambas' | '1' | '2' }
+       auto: reparte el nº de riegos del mes · semana: días fijos (L, X, V…) · como los patrones del Lanzador (opción A)
+     camp.cal[i] = días puestos a mano ese mes (al pulsar un día o con +1/−1 en una quincena). Sin él, sale del patrón. */
+  const diasDelMes = (anio, i) => new Date(Number(anio), i + 1, 0).getDate();
+  const diaSemana = (anio, i, d) => (new Date(Number(anio), i, d).getDay() + 6) % 7; // 0 = lunes
+  const rangoQ = (anio, i, q) => { const D = diasDelMes(anio, i), a = q === '2' ? 16 : 1, b = q === '1' ? 15 : D, r = []; for (let d = a; d <= b; d++) r.push(d); return r; };
+  function repartir(rango, n) {
+    if (!n) return [];
+    if (n >= rango.length) return rango.slice();
+    const out = new Set();
+    for (let k = 0; k < n; k++) out.add(rango[Math.min(rango.length - 1, Math.floor((k + 0.5) * rango.length / n))]);
+    return [...out].sort((a, b) => a - b);
+  }
+  function calendarioAuto(plan, camp, anio, i) {
+    const pt = plan.patron || { modo: 'auto', quincena: 'ambas' };
+    const rango = rangoQ(anio, i, pt.quincena || 'ambas');
+    if (pt.modo === 'ninguno') return [];
+    if (pt.modo === 'todos') return rango;
+    if (pt.modo === 'semana' && (pt.dias || []).length) return rango.filter((d) => pt.dias.includes(diaSemana(anio, i, d)));
+    return repartir(rango, n0(camp && camp.riego && camp.riego[i] && camp.riego[i].n));
+  }
+  function calendario(plan, camp, anio, i) {
+    const manual = camp && camp.cal && Array.isArray(camp.cal[i]) ? camp.cal[i] : null;
+    const D = diasDelMes(anio, i);
+    const dias = [...new Set(manual || calendarioAuto(plan, camp, anio, i))].filter((d) => d >= 1 && d <= D).sort((a, b) => a - b);
+    return { dias, manual: !!manual, total: D, primerDia: diaSemana(anio, i, 1) };
+  }
+  /* +1: añade el día de la quincena más alejado de los ya marcados · −1: quita el que deja los riegos más repartidos */
+  function masDia(dias, anio, i, q) {
+    const r = rangoQ(anio, i, q);
+    if (r.every((d) => dias.includes(d))) return dias.slice();
+    // el centro del hueco más grande entre riegos (los bordes de la quincena cuentan como riego)
+    const marcas = [r[0] - 1, ...dias.filter((d) => r.includes(d)), r[r.length - 1] + 1];
+    let mejor = null, gap = 0;
+    for (let k = 1; k < marcas.length; k++) { const g = marcas[k] - marcas[k - 1]; if (g > gap && g > 1) { gap = g; mejor = Math.floor((marcas[k] + marcas[k - 1]) / 2); } }
+    if (mejor == null || dias.includes(mejor)) mejor = r.find((d) => !dias.includes(d));
+    return [...dias, mejor].sort((a, b) => a - b);
+  }
+  function menosDia(dias, anio, i, q) {
+    const en = dias.filter((d) => rangoQ(anio, i, q).includes(d));
+    if (!en.length) return dias.slice();
+    // quita el día con los vecinos más cerca (el hueco que deja es el más pequeño)
+    const hueco = (d) => { const k = dias.indexOf(d), a = k > 0 ? dias[k - 1] : 0, b = k < dias.length - 1 ? dias[k + 1] : diasDelMes(anio, i) + 1; return b - a; };
+    const peor = en.reduce((a, d) => (hueco(d) < hueco(a) ? d : a), en[0]);
+    return dias.filter((d) => d !== peor);
+  }
+  /* Ácido para limpiar goteros (1 hora): tabla del Excel según los bicarbonatos del agua (cc por m3) × consumo de la finca por hora */
+  const ACIDO_LIMPIEZA = { nitrico: [129, 214, 300, 386, 472, 558, 643, 729, 815, 901], fosforico: [123, 205, 286, 368, 450, 532, 614, 696, 778, 859] };
+  function acidoLimpieza(plan, agua) {
+    const h = n0(agua && agua.v && agua.v.hco3);
+    if (!h) return null;
+    const k = Math.min(10, Math.max(1, Math.ceil(h))) - 1;
+    const consumo = n0(plan.caudal) * n0(plan.emisores) * n0(plan.arboles) / 1000;
+    return { nitrico: ACIDO_LIMPIEZA.nitrico[k] / 1000 * consumo, fosforico: ACIDO_LIMPIEZA.fosforico[k] / 1000 * consumo, consumo };
+  }
+
+  const api = { diasDelMes, diaSemana, calendarioAuto, calendario, masDia, menosDia, acidoLimpieza, RIQ, NUT, PERIODOS, indice, prodDe, familiaPorNombre, productosDesdeFilas, tanquesHabituales, tanques, cantidad, mes, hayFert, ufCampana, solucion, ajustar, fertDesdeExcel, arbHaReal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.FERT = api;
 })(typeof window !== 'undefined' ? window : globalThis);
