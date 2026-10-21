@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -363,6 +363,7 @@ function renderPlanes(v) {
 }
 
 function renderDetalle(el) {
+  cerrarCombo();
   const p = planSel(); if (!p) { el.innerHTML = ''; return; }
   const camp = campDe(p);
   const av = avisosDe(p);
@@ -964,14 +965,6 @@ function mesInicial() { const hoy = new Date(); return String(hoy.getFullYear())
 function campAnteriorCon(p, i) {
   return Object.keys(p.campanas || {}).filter((k) => k < ui.camp).sort().reverse().find((k) => { const f = p.campanas[k].fert; return f && f[i] && f[i].lineas && f[i].lineas.length; }) || null;
 }
-function opcionesProducto(sel, nombreLibre) {
-  const ix = ixProd();
-  const grupos = { 1: [], 2: [], E: [] };
-  for (const pr of [...db.productos].filter((x) => x.activo !== false).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))) (grupos[pr.tanque] || grupos[1]).push(pr);
-  const conocido = sel && ix.id.has(sel);
-  return `${!conocido && nombreLibre ? `<option value="" selected>${esc(nombreLibre)} (no está en Productos)</option>` : ''}<option value="" ${!sel && !nombreLibre ? 'selected' : ''}>— Elegir producto —</option>` +
-    [['1', 'Tanque 1'], ['2', 'Tanque 2'], ['E', 'Especiales (E)']].map(([k, t]) => `<optgroup label="${t}">${grupos[k].map((pr) => `<option value="${pr.id}" ${pr.id === sel ? 'selected' : ''}>${esc(pr.nombre)}</option>`).join('')}</optgroup>`).join('');
-}
 function tabFert(el, p, camp) {
   if (!camp) { el.innerHTML = '<p class="muted">Crea antes la campaña.</p>'; return; }
   if (ui.mes == null) ui.mes = mesInicial();
@@ -994,11 +987,11 @@ function tabFert(el, p, camp) {
     return `<tr><td><b>${nu}</b></td><td class="n">${o == null ? '–' : fmt(o, 1)}</td><td class="n"><b>${fmt(a, 1)}</b></td><td class="n">${dif == null ? '–' : (dif > 0 ? '+' : '') + fmt(dif, 1)}</td><td class="n">${pc == null ? '' : `<span class="${clase}">${fmt(pc, 0)} %</span>`}</td></tr>`;
   }).join('');
   const filas = m.lineas.map((l, k) => `<tr>
-      <td><select class="cell izq" data-fl="${k}" data-c="prodId">${opcionesProducto(l.prod ? l.prod.id : null, l.prod ? null : l.nombre)}</select></td>
+      <td><input class="cell izq combo-in" data-cb="prod" data-k2="${k}" value="${esc(l.prod ? l.prod.nombre : l.nombre || '')}" placeholder="Escribe para buscar…" autocomplete="off" ${l.prod || !l.nombre ? '' : 'title="No está en Productos"'}>${!l.prod && l.nombre ? '<div class="small" style="color:var(--warn)">No está en Productos</div>' : ''}</td>
       <td class="w"><input class="cell" data-fl="${k}" data-c="dosis" value="${fmtIn(l.dosis)}"></td>
       <td><select class="cell izq" data-fl="${k}" data-c="formato"><option value="pie" ${l.formato !== 'ha' ? 'selected' : ''}>${l.liquido ? 'cc' : 'g'}/pie</option><option value="ha" ${l.formato === 'ha' ? 'selected' : ''}>${l.liquido ? 'L' : 'kg'}/ha</option></select></td>
       <td class="w" style="width:60px"><input class="cell" data-fl="${k}" data-c="riegos" value="${fmtIn(l.riegos)}"></td>
-      <td><input class="cell izq" list="periodosL" data-fl="${k}" data-c="periodo" value="${esc(l.periodo || '')}"></td>
+      <td><input class="cell izq combo-in" data-cb="per" data-k2="${k}" value="${esc(l.periodo || '')}" placeholder="Periodo" autocomplete="off"></td>
       <td><select class="cell izq" data-fl="${k}" data-c="tanque"><option value="">Auto (${esc(l.tanqueAuto ? l.tanqueFinal : (l.prod ? (l.prod.tanque === 'E' ? 'E' : l.prod.tanque) : '1'))})</option>${TANQUES.map((t) => `<option ${!l.tanqueAuto && l.tanqueFinal === t ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
       <td class="n">${fmt(l.porRiegoFinca, 2)} ${l.liquido ? 'L' : 'kg'}</td>
       <td class="n">${fmt(l.porPie, 1)} ${l.liquido ? 'cc' : 'g'}</td>
@@ -1022,7 +1015,6 @@ function tabFert(el, p, camp) {
         ${htmlCalendario(p, cal, rg)}
         <div class="tanques" style="margin-top:10px">${resumenT || '<p class="muted small">Sin productos este mes.</p>'}</div></div></div>
     <h3 style="margin-top:16px">Productos</h3>
-    <datalist id="periodosL">${FERT.PERIODOS.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
     <div class="scroll-x"><table class="t fert"><tr><th>Producto</th><th class="n">Dosis/riego</th><th>Unidad</th><th class="n">Riegos</th><th>Periodo</th><th>Tanque</th><th class="n">Por riego finca</th><th class="n">Por pie</th><th class="n">N</th><th class="n">P2O5</th><th class="n">K2O</th><th></th></tr>
       ${filas || '<tr><td colspan="12" class="muted">Sin productos este mes.</td></tr>'}</table></div>
     ${m.sinProducto ? `<div class="aviso" style="margin-top:8px">${plural(m.sinProducto, 'producto no está', 'productos no están')} en la base de datos de Productos: no suman UF. ${db.productos.length ? 'Elígelos en la lista o dalos de alta en Productos.' : 'Importa antes tus productos (sección Productos).'}</div>` : ''}
@@ -1064,7 +1056,15 @@ function tabFert(el, p, camp) {
   $('#fObs', el).onchange = (e) => { commit(() => { camp.fert = camp.fert || {}; camp.fert[i] = camp.fert[i] || { lineas: [] }; camp.fert[i].obs = e.target.value.trim(); }, { render: false }); };
   $('#fRev', el).onchange = (e) => { commit(() => { marcarRevisado(camp, i, e.target.checked); }, { render: false }); renderEstado(); };
   $('#fInf', el).onclick = async (e) => { e.target.disabled = true; await generarInforme(p, ui.camp, i); renderDetalleSoloCuerpo(); };
-  $('#fAdd', el).onclick = () => guardarLineas((ls) => ls.push({ prodId: null, nombre: '', dosis: 0, formato: 'pie', riegos: rg.n || 0, periodo: 'Resto mes', tanque: null }));
+  $('#fAdd', el).onclick = () => { const n = fm.lineas.length; guardarLineas((ls) => ls.push({ prodId: null, nombre: '', dosis: 0, formato: 'pie', riegos: rg.n || 0, periodo: 'Resto mes', tanque: null })); enfocar(`[data-cb="prod"][data-k2="${n}"]`); };
+  // Producto y periodo: desplegables que se filtran al escribir
+  const opsProd = db.productos.filter((x) => x.activo !== false).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map((pr) => ({ v: pr.id, t: pr.nombre, sub: (pr.tanque === 'E' ? 'E' : 'T' + pr.tanque) + ['n', 'p2o5', 'k2o'].filter((r) => pr.riq && +pr.riq[r]).map((r) => ` · ${{ n: 'N', p2o5: 'P', k2o: 'K' }[r]} ${fmt(pr.riq[r], pr.riq[r] % 1 ? 1 : 0)}`).join('') }));
+  const usados = [...new Set(Object.values(camp.fert || {}).flatMap((x) => ((x && x.lineas) || []).map((l) => l.periodo)).filter(Boolean))];
+  const opsPer = [...new Set([...FERT.PERIODOS, ...usados])].map((x) => ({ v: x, t: x }));
+  $$('[data-cb="prod"]', el).forEach((inp) => combo(inp, { opciones: opsProd, vacio: db.productos.length ? 'Ningún producto con ese nombre' : 'Importa antes tus productos (sección Productos)', alElegir: (v) => {
+    const k = +inp.dataset.k2; guardarLineas((ls) => { const pr = ix.id.get(v); if (pr) { ls[k].prodId = pr.id; ls[k].nombre = pr.nombre; } }); enfocar(`[data-fl="${k}"][data-c="dosis"]`);
+  } }));
+  $$('[data-cb="per"]', el).forEach((inp) => combo(inp, { opciones: opsPer, libre: true, alElegir: (v, t) => { const k = +inp.dataset.k2; guardarLineas((ls) => { ls[k].periodo = (t || '').trim(); }); } }));
   if ($('#fAnt', el)) $('#fAnt', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(p.campanas[ant].fert[i].lineas)); }); toast(`Copiado ${CALC.MESES[i].toLowerCase()} de ${ant}`); };
   if ($('#fPrev', el)) $('#fPrev', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rg.n || l.riegos) : l.riegos }))); }); };
   $('#fTq', el).onclick = () => guardarLineas((ls) => ls.forEach((l) => { l.tanque = null; }));
@@ -1368,6 +1368,67 @@ async function traerTextosPendientes(forzar = false) {
   renderAll();
 }
 function renderTextosChips(v) { const i = ui.txtMes, tt = db.textos[claveMes(ui.camp, i)]; const b = $(`[data-tm="${i}"]`, v); if (b) b.innerHTML = CALC.MESES[i].slice(0, 3) + (tt && ((tt.general || '').trim() || Object.values(tt.fito || {}).some((x) => (x || '').trim())) ? '<i></i>' : ''); }
+
+/* ---------- Desplegable con búsqueda (ordenador y tablet) ----------
+   opciones: [{ v, t, sub }] · libre: se puede dejar un texto que no está en la lista (periodo) · alElegir(v, t) */
+let comboAbierto = null;
+function cerrarCombo() { if (comboAbierto) { comboAbierto.lista.remove(); comboAbierto = null; } }
+function enfocar(sel) { setTimeout(() => { const n = $(sel); if (n) { n.focus(); if (n.select) n.select(); } }, 30); }
+function combo(inp, { opciones, libre = false, vacio = 'Sin resultados', alElegir }) {
+  const original = inp.value;
+  let filtradas = [], activo = -1, lista = null, hecho = false;
+  const colocar = () => {
+    if (!lista) return;
+    const r = inp.getBoundingClientRect(), vv = window.visualViewport;
+    const alto = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const abajo = alto - r.bottom - 8, arriba = r.top - (vv ? vv.offsetTop : 0) - 8;
+    const sube = abajo < 180 && arriba > abajo;
+    lista.style.left = Math.max(4, Math.min(r.left, window.innerWidth - Math.max(r.width, 260) - 4)) + 'px';
+    lista.style.width = Math.max(r.width, 260) + 'px';
+    lista.style.maxHeight = Math.max(120, Math.min(300, sube ? arriba : abajo)) + 'px';
+    if (sube) { lista.style.top = ''; lista.style.bottom = (window.innerHeight - r.top + 4) + 'px'; } else { lista.style.bottom = ''; lista.style.top = (r.bottom + 4) + 'px'; }
+  };
+  const pintar = () => {
+    lista.innerHTML = filtradas.length ? filtradas.map((o, k) => `<div class="combo-op ${k === activo ? 'on' : ''}" data-ci="${k}"><span>${esc(o.t)}</span>${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</div>`).join('')
+      : `<div class="combo-vacio">${libre && inp.value.trim() ? 'Se quedará: «' + esc(inp.value.trim()) + '»' : esc(vacio)}</div>`;
+    const a = $('.combo-op.on', lista); if (a) a.scrollIntoView({ block: 'nearest' });
+  };
+  const filtrar = (todo) => {
+    const q = todo ? [] : CALC.norm(inp.value).split(/\s+/).filter(Boolean);
+    filtradas = opciones.filter((o) => { const h = CALC.norm(o.t + ' ' + (o.sub || '')); return q.every((w) => h.includes(w)); });
+    activo = libre ? -1 : (filtradas.length ? 0 : -1);
+    if (todo && !libre) { const k = filtradas.findIndex((o) => o.t === inp.value); if (k >= 0) activo = k; }
+    pintar();
+  };
+  const abrir = () => {
+    cerrarCombo();
+    lista = document.createElement('div'); lista.className = 'combo-lista'; document.body.appendChild(lista);
+    comboAbierto = { lista, inp };
+    lista.addEventListener('pointerdown', (e) => { e.preventDefault(); const it = e.target.closest('[data-ci]'); if (it) elegir(filtradas[+it.dataset.ci]); });
+    filtrar(true); colocar();
+  };
+  const elegir = (o) => { hecho = true; inp.value = o.t; cerrarCombo(); lista = null; alElegir(o.v, o.t); };
+  const fin = () => { // al salir sin elegir de la lista
+    if (hecho) return; hecho = true; cerrarCombo(); lista = null;
+    const t = inp.value.trim();
+    if (libre) { if (t !== original.trim()) alElegir(null, t); return; }
+    const exacto = opciones.find((o) => CALC.norm(o.t) === CALC.norm(t));
+    if (exacto && exacto.t !== original) alElegir(exacto.v, exacto.t); else inp.value = original;
+  };
+  inp.addEventListener('focus', () => { hecho = false; if (inp.select) inp.select(); abrir(); });
+  inp.addEventListener('click', () => { if (!lista) { hecho = false; abrir(); } });
+  inp.addEventListener('input', () => { if (!lista) abrir(); filtrar(false); colocar(); });
+  inp.addEventListener('blur', () => setTimeout(fin, 120));
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (!lista) abrir(); if (!filtradas.length) return; activo = e.key === 'ArrowDown' ? Math.min(filtradas.length - 1, activo + 1) : Math.max(libre ? -1 : 0, activo - 1); pintar(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (lista && activo >= 0 && filtradas[activo]) elegir(filtradas[activo]); else { fin(); inp.blur(); } }
+    else if (e.key === 'Escape') { e.stopPropagation(); inp.value = original; hecho = true; cerrarCombo(); lista = null; inp.blur(); }
+    else if (e.key === 'Tab' && lista && !libre && activo >= 0 && filtradas[activo] && CALC.norm(inp.value) !== CALC.norm(original)) { elegir(filtradas[activo]); }
+  });
+}
+window.addEventListener('resize', () => { if (comboAbierto) comboAbierto.inp.dispatchEvent(new Event('input')); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', () => { if (comboAbierto && document.activeElement === comboAbierto.inp) comboAbierto.inp.dispatchEvent(new Event('input')); });
+document.addEventListener('scroll', (e) => { if (comboAbierto && !(e.target && e.target.classList && e.target.classList.contains('combo-lista'))) { const r = comboAbierto.inp.getBoundingClientRect(); const l = comboAbierto.lista; l.style.top = l.style.top ? (r.bottom + 4) + 'px' : ''; if (l.style.bottom) l.style.bottom = (window.innerHeight - r.top + 4) + 'px'; } }, true);
 
 /* ---------- PRODUCTOS ---------- */
 const RUTA_PRODUCTOS = 'Cuaderno de campo/Calculadoras Excel/Base de datos/Productos Gestion fertirrigacion.xlsx';
