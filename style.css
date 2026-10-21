@@ -175,18 +175,41 @@ code { font-family: var(--mono); font-size: 12px; background: var(--chip); paddi
 .fld .chk { min-height: 33px; }
 .fld .chk input { width: auto; flex: none; }
 
-/* Tablet */
-@media (max-width: 1100px) {
+/* Tablet (Xiaomi Pad 5 y similares, hasta 1366 px): menú de iconos, lista O plan, tablas compactas */
+.solo-compacto { display: none; }
+@media (max-width: 1366px) {
   .layout { grid-template-columns: 64px 1fr; }
   .nav span, .nav b, .side-foot { display: none; }
   .nav { justify-content: center; padding: 12px 0; position: relative; }
-  main { padding: 14px 14px 60px; }
-  .planes { grid-template-columns: 1fr; }
-  .lista { position: static; max-height: 38vh; }
-  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  main { padding: 12px 12px 50px; }
   .top { gap: 10px; padding: 0 12px; }
-  .estado { max-width: 46vw; }
+  .top h1 { font-size: 16px; }
+  .estado { max-width: 52vw; }
+  .solo-compacto { display: inline-flex; }
+  .planes.pv { grid-template-columns: minmax(0, 1fr); }
+  #detalle { min-width: 0; }
+  .planes.pv.ver-lista #detalle, .planes.pv.ver-detalle .lista { display: none; }
+  .planes.pv .lista { position: static; max-height: none; }
+  .planes:not(.pv) { grid-template-columns: 250px minmax(0, 1fr); }
+  .card { padding: 14px 14px; }
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tab { padding: 8px 11px; white-space: nowrap; flex: none; }
+  .kpi strong { font-size: 18px; }
+  table.t th, table.t td { padding-left: 6px; padding-right: 6px; }
+  table.fert { font-size: 13px; }
+  table.fert td { padding: 3px 3px; }
+  table.fert input.cell, table.fert select.cell { font-size: 13.5px; padding: 6px 5px; }
+  table.fert input.combo-in[data-cb="prod"] { min-width: 170px; }
+  table.fert input.combo-in[data-cb="per"] { min-width: 100px; }
+  table.fert select.cell { min-width: 70px; }
+  table.fert select.cell[data-c="tanque"] { min-width: 76px; }
+  table.fert td.w input.cell { min-width: 46px; }
+}
+@media (max-width: 900px) {
+  .tabs { flex-wrap: wrap; overflow: visible; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid2 { grid-template-columns: 1fr; }
+  .estado { max-width: 46vw; }
 }
 .card { min-width: 0; overflow-x: auto; }
 @media (pointer: coarse) {

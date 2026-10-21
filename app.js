@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -16,6 +16,7 @@ function parseHora(t) {
   const m = t.match(/^(\d+)\s*[:h.]\s*(\d{1,2})$/); if (m && t.includes(':')) return +m[1] + +m[2] / 60;
   const n = CALC.num(t); return n == null ? 0 : n;
 }
+const compacto = () => window.matchMedia('(max-width: 1366px)').matches;
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
 function haceTxt(iso) {
   if (!iso) return 'nunca'; const s = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -25,7 +26,7 @@ function haceTxt(iso) {
 
 /* ---------- Estado ---------- */
 let db = null;
-let ui = { vista: 'planes', planId: null, tab: 'finca', q: '', filtro: 'todos', camp: null, analTipo: 'todas', infMes: null, infQ: '', infFiltro: 'todos', txtMes: null };
+let ui = { vista: 'planes', planId: null, tab: 'finca', q: '', filtro: 'todos', camp: null, analTipo: 'todas', infMes: null, infQ: '', infFiltro: 'todos', txtMes: null, verLista: true };
 let local = { equipo: '' };
 let conn = 'iniciando'; // sin-nube | error | listo
 let dirty = false, guardando = false, saveTimer = null, ultimoGuardado = null, errorGuardar = '';
@@ -348,7 +349,7 @@ function renderPlanes(v) {
     html += `<button class="item" data-plan="${p.id}" aria-current="${p.id === ui.planId}"><span class="dot ${nivelPlan(av)}"></span><span class="t"><b>${esc(p.nombre)}</b><span>${esc(p.finca)} · ${esc(p.tipoCultivo || p.cultivo)}</span></span>${p.vulnerable ? '<span class="chip amb" title="Zona vulnerable">ZV</span>' : ''}</button>`;
   }
   const filtros = [['todos', 'Todos'], ['avisos', 'Con avisos'], ['vulnerable', 'Zona vulnerable'], ['sincamp', 'Sin campaña ' + ui.camp], ...(IX ? [['sinenlace', `Sin enlazar (${db.planes.filter((x) => !x.mxFin).length})`]] : [])];
-  v.innerHTML = `<div class="planes">
+  v.innerHTML = `<div class="planes pv ${ui.verLista ? 'ver-lista' : 'ver-detalle'}">
     <div class="card lista"><div class="busca"><div class="row"><input id="pq" type="search" placeholder="Buscar plan, cliente, finca…" value="${esc(ui.q)}" style="flex:1"><button class="btn peq" id="pNuevo" title="Nuevo plan">+ Nuevo</button></div>
       <div class="filtros">${filtros.map(([k, t]) => `<button data-f="${k}" aria-pressed="${ui.filtro === k}">${esc(t)}</button>`).join('')}</div>
       <div class="small muted">${plural(lista.length, 'plan', 'planes')}</div></div>
@@ -356,7 +357,7 @@ function renderPlanes(v) {
     <div id="detalle"></div></div>`;
   const pq = $('#pq'); pq.oninput = () => { ui.q = pq.value; const pos = pq.selectionStart; renderPlanes(v); const n = $('#pq'); n.focus(); n.setSelectionRange(pos, pos); };
   $$('[data-f]', v).forEach((b) => { b.onclick = () => { ui.filtro = b.dataset.f; renderPlanes(v); }; });
-  $$('[data-plan]', v).forEach((b) => { b.onclick = () => { ui.planId = b.dataset.plan; renderPlanes(v); }; });
+  $$('[data-plan]', v).forEach((b) => { b.onclick = () => { ui.planId = b.dataset.plan; const cambia = ui.verLista; ui.verLista = false; renderPlanes(v); if (cambia && compacto()) window.scrollTo(0, 0); }; });
   $('#pNuevo').onclick = nuevoPlan;
   renderDetalle($('#detalle'));
   const act = $('.item[aria-current="true"]', v); if (act) act.scrollIntoView({ block: 'nearest' });
@@ -378,14 +379,15 @@ function renderDetalle(el) {
   }
   const nAv = (d) => av.filter((a) => a.donde === d).length;
   const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto'], ['fert', 'Fertirrigación']];
-  el.innerHTML = `<div class="card"><div class="cab"><div class="t"><h2>${esc(p.nombre)}</h2>
+  el.innerHTML = `<div class="card"><div class="cab"><button class="btn peq solo-compacto" id="dLista" title="Volver a la lista de planes">‹ Planes</button><div class="t"><h2>${esc(p.nombre)}</h2>
       <div class="muted">${esc(p.cliente)} › ${esc(p.finca)} · ${esc(p.cultivo)} · ${fmt(p.superficie, 2)} ha · ${fmt(p.arboles, 0)} árboles</div>
       <div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
     ${camp ? kp : `<div class="aviso alto" style="margin-top:12px"><span>Este plan no tiene datos de la campaña <b>${esc(ui.camp)}</b>.</span><span class="spacer"></span>${Object.keys(p.campanas || {}).length ? `<button class="btn peq" id="dCrear">Crearla copiando de ${esc(Object.keys(p.campanas).sort().slice(-1)[0])}</button>` : `<button class="btn peq" id="dCrear">Crearla vacía</button>`}</div>`}
-    ${av.length ? `<details style="margin-top:12px" ${av.some((a) => a.nivel === 'alto') ? 'open' : ''}><summary class="small muted" style="cursor:pointer">Ver avisos (${av.length})</summary><div style="margin-top:8px">${av.map((a) => `<div class="aviso ${a.nivel}"><span class="dot ${a.nivel}" style="margin-top:6px"></span><span>${esc(a.txt)}</span></div>`).join('')}</div></details>` : ''}
+    ${av.length ? `<details style="margin-top:12px" ${av.some((a) => a.nivel === 'alto') && !compacto() ? 'open' : ''}><summary class="small muted" style="cursor:pointer">Ver avisos (${av.length})</summary><div style="margin-top:8px">${av.map((a) => `<div class="aviso ${a.nivel}"><span class="dot ${a.nivel}" style="margin-top:6px"></span><span>${esc(a.txt)}</span></div>`).join('')}</div></details>` : ''}
     <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${ui.tab === k}">${t}${nAv(k) ? `<span class="c">${nAv(k)}</span>` : ''}</button>`).join('')}</div>
     <div id="tabBody"></div></div>`;
   $$('[data-tab]', el).forEach((b) => { b.onclick = () => { ui.tab = b.dataset.tab; renderDetalle(el); }; });
+  $('#dLista', el).onclick = () => { ui.verLista = true; renderAll(); window.scrollTo(0, 0); };
   const dc = $('#dCrear', el); if (dc) dc.onclick = () => { commit(() => crearCampana(p, ui.camp)); toast('Campaña ' + ui.camp + ' creada'); };
   const body = $('#tabBody', el);
   if (ui.tab === 'finca') tabFinca(body, p);
@@ -523,7 +525,7 @@ function tabFinca(el, p) {
   };
   $('#fDel', el).onclick = () => {
     if (!confirm(`¿Borrar el plan «${p.nombre}»? Se borran sus campañas. Las analíticas no se borran.`)) return;
-    commit((d) => { d.planes = d.planes.filter((x) => x.id !== p.id); ui.planId = null; }); toast('Plan borrado');
+    commit((d) => { d.planes = d.planes.filter((x) => x.id !== p.id); ui.planId = null; ui.verLista = true; }); toast('Plan borrado');
   };
   const fa = $('#fAuto', el);
   if (fa) fa.onclick = () => { const r = enlazarPlan(p, true); commit(() => {}, { render: false }); renderDetalleSoloCuerpo(); toast(r ? 'Enlazado con ' + r : 'No se encontró por nombre: elígelo en la lista', !r); };
@@ -1290,7 +1292,7 @@ function renderInformes(v) {
     if (!confirm(`¿Marcar como revisados ${plural(ok.length, 'plan', 'planes')}?`)) return;
     commit(() => { for (const { p } of ok) marcarRevisado(campDe(p), i, true); });
   };
-  $$('[data-iab]', v).forEach((b) => { b.onclick = () => { ui.planId = b.dataset.iab; ui.tab = 'fert'; ui.mes = i; ui.vista = 'planes'; renderAll(); }; });
+  $$('[data-iab]', v).forEach((b) => { b.onclick = () => { ui.planId = b.dataset.iab; ui.verLista = false; ui.tab = 'fert'; ui.mes = i; ui.vista = 'planes'; renderAll(); }; });
   $$('[data-ipdf]', v).forEach((b) => { b.onclick = async () => { b.disabled = true; await generarInforme(db.planes.find((x) => x.id === b.dataset.ipdf), ui.camp, i); renderAll(); }; });
   $('#iGen', v).onclick = async () => {
     const rev = filas.filter((x) => !x.e.sinCamp && x.e.inf.revisado);
@@ -1537,7 +1539,7 @@ function nuevoPlan() {
     if (!p.reparto) { const r = db.repartos.find((x) => x.grupo === p.grupo); if (r) p.reparto = r.id; }
     p.campanaActual = ui.camp;
     if (IX) enlazarPlan(p, false);
-    commit((d) => { d.planes.push(p); ui.planId = p.id; ui.tab = 'finca'; ui.vista = 'planes'; });
+    commit((d) => { d.planes.push(p); ui.planId = p.id; ui.verLista = false; ui.tab = 'finca'; ui.vista = 'planes'; });
     cerrarModal(); toast('Plan creado');
   };
 }
@@ -1569,7 +1571,7 @@ function renderAvisos(v) {
     <div class="row small" style="margin:8px 0 14px">${Object.entries(cuenta).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `<span class="chip">${esc(k.replace(/#/g, 'X'))}: <b>${n}</b></span>`).join('')}</div>
     <table class="t"><tr><th></th><th>Plan</th><th>Cliente</th><th>Avisos</th></tr>
     ${filas.map(({ p, av }) => `<tr class="click" data-ap="${p.id}"><td><span class="dot ${nivelPlan(av)}"></span></td><td><b>${esc(p.nombre)}</b>${p.vulnerable ? ' <span class="chip amb">ZV</span>' : ''}</td><td>${esc(p.cliente)}</td><td class="small">${av.map((a) => `<div>${a.nivel === 'alto' ? '● ' : '○ '}${esc(a.txt)}</div>`).join('')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin avisos.</td></tr>'}</table></div>`;
-  $$('[data-ap]', v).forEach((r) => { r.onclick = () => { const p = db.planes.find((x) => x.id === r.dataset.ap); const a = avisosDe(p)[0]; ui.planId = p.id; ui.tab = a ? a.donde : 'finca'; ui.vista = 'planes'; renderAll(); }; });
+  $$('[data-ap]', v).forEach((r) => { r.onclick = () => { const p = db.planes.find((x) => x.id === r.dataset.ap); const a = avisosDe(p)[0]; ui.planId = p.id; ui.verLista = false; ui.tab = a ? a.donde : 'finca'; ui.vista = 'planes'; renderAll(); }; });
 }
 
 /* ---------- AJUSTES ---------- */
@@ -1645,7 +1647,7 @@ function renderAjustes(v) {
     } catch (e) { toast(e.message || String(e), true); }
   };
   const enl = $('#aMxEnl');
-  if ($('#aMxVer')) $('#aMxVer').onclick = () => { ui.vista = 'planes'; ui.filtro = 'sinenlace'; ui.q = ''; ui.tab = 'finca'; ui.planId = null; renderAll(); };
+  if ($('#aMxVer')) $('#aMxVer').onclick = () => { ui.vista = 'planes'; ui.filtro = 'sinenlace'; ui.q = ''; ui.tab = 'finca'; ui.planId = null; ui.verLista = true; renderAll(); };
   if (enl) enl.onclick = () => { let n = 0; commit((d) => { for (const p of d.planes) if (!p.mxFin && enlazarPlan(p, false)) n++; }); toast(`Enlazados ${plural(n, 'plan', 'planes')} más`); };
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
