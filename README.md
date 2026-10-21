@@ -29,6 +29,7 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 - **Textos**: información fitosanitaria por grupo (cítricos, frutales, almendro, olivos) y situación actual, por mes.
 - **Informes**: lista del mes con el estado de cada plan, «Preparar mes» (copia el mismo mes de la campaña anterior o el mes anterior en los planes vacíos), marcar revisados y generar los PDF de los revisados en `Clientes/<carpeta>/Planes de abonado/` y una copia en `Planes de abonado/` (raíz de Asesoramiento agrícola). En la tablet quedan en Drive y el ordenador los pasa.
 - El pie del informe (texto, teléfono y email) se escribe en Ajustes y se guarda en Drive, no en el código.
+**Versión 1.5:** los textos del mes se pueden preparar con Claude (tarea programada del día 20). Tras confirmarlos, Claude deja `textos-pendientes.json` en Drive › Apps › Planes de abonado y la app los carga sola en Textos al abrirse (o con «Buscar textos de Claude»); después el archivo pasa a `Copias`.
 - El script tiene la acción `enviados`, que usa la app Asesor para marcar «Enviado» los meses con todos los informes generados.
 
 ## Dónde están los datos (desde la versión 1.1)

@@ -15,6 +15,7 @@ const CLAVE = 'CAMBIA-ESTA-CLAVE';
 const DATOS = 'datos.json';
 const COPIAS = 'Copias';
 const PDFS = 'PDF pendientes de OneDrive';
+const TEXTOS = 'textos-pendientes.json';
 
 function autorizar() {
   carpeta(); SpreadsheetApp.getActive().getName();
@@ -40,6 +41,8 @@ function doPost(e) {
       case 'leerPdf': return salida(leerPdf(req));
       case 'borrarPdf': return salida(borrarPdf(req));
       case 'enviados': return salida(enviados(req));
+      case 'textosPendientes': return salida(textosPendientes());
+      case 'textosAplicados': return salida(textosAplicados(req));
       default: return salida({ ok: false, error: 'acción desconocida' });
     }
   } catch (err) {
@@ -129,4 +132,19 @@ function enviados(req) {
     });
   });
   return { ok: true, enviados: out, planes: (d.planes || []).map(function (p) { return { mxCli: p.mxCli || null, cliente: p.cliente || '', plan: p.nombre || '', campanas: Object.keys(p.campanas || {}) }; }) };
+}
+
+/* ---------- Textos del informe preparados con Claude ----------
+   Claude deja «textos-pendientes.json» en esta carpeta (tras confirmarlo Francis). La app lo lee al abrirse,
+   lo carga en Textos y lo pasa a «Copias» con otro nombre para no cargarlo dos veces. */
+function textosPendientes() {
+  const it = carpeta().getFilesByName(TEXTOS);
+  while (it.hasNext()) { const f = it.next(); if (!f.isTrashed()) return { ok: true, id: f.getId(), textos: f.getBlob().getDataAsString('UTF-8') }; }
+  return { ok: true, textos: null };
+}
+function textosAplicados(req) {
+  const f = DriveApp.getFileById(req.id);
+  f.setName('textos-aplicados-' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd-HHmm') + '.json');
+  f.moveTo(sub(COPIAS));
+  return { ok: true };
 }

@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -113,7 +113,7 @@ async function comprobarCambios() {
 }
 window.addEventListener('beforeunload', (e) => { if (dirty) { guardarAhora(); e.preventDefault(); e.returnValue = ''; } });
 window.addEventListener('online', () => { offline = false; comprobarCambios(); procesarPendientes(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { comprobarCambios(); procesarPendientes(); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { comprobarCambios(); procesarPendientes(); traerTextosPendientes(); } });
 
 /* ---------- Avisos, toast, banner, modal ---------- */
 let toastT = null;
@@ -190,6 +190,7 @@ async function abrir() {
   if (logoCache && db && conn === 'listo' && !db.config.logo) commit((d) => { d.config.logo = logoCache; }, { render: false });
   prepararVista(); renderAll();
   procesarPendientes();
+  traerTextosPendientes();
 }
 
 /* ---------- OneDrive (solo en el ordenador): Excels y PDF ---------- */
@@ -1324,7 +1325,8 @@ function renderTextos(v) {
   const nombreG = { CITRICOS: 'Cítricos', FRUTALES: 'Frutales', ALMENDRO: 'Almendro', OLIVOS: 'Olivos' };
   const chips = CALC.MESES.map((mm, j) => { const tt = db.textos[claveMes(ui.camp, j)]; const lleno = tt && ((tt.general || '').trim() || Object.values(tt.fito || {}).some((x) => (x || '').trim())); return `<button class="mes-chip ${j === i ? 'on' : ''}" data-tm="${j}">${mm.slice(0, 3)}${lleno ? '<i></i>' : ''}</button>`; }).join('');
   v.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Textos del informe · ${esc(CALC.MESES[i].toLowerCase())} ${esc(ui.camp)}</h2><span class="spacer"></span>
-      ${prev ? `<button class="btn peq" id="tCop">Copiar los de ${esc(CALC.MESES[i > 0 ? i - 1 : 11].toLowerCase())}</button>` : ''}<button class="btn peq" id="tInf">Ver informes del mes</button></div>
+      ${prev ? `<button class="btn peq" id="tCop">Copiar los de ${esc(CALC.MESES[i > 0 ? i - 1 : 11].toLowerCase())}</button>` : ''}<button class="btn peq" id="tClaude" title="Carga los textos que hayas preparado con Claude y confirmado">Buscar textos de Claude</button><button class="btn peq" id="tInf">Ver informes del mes</button></div>
+    ${t.claude ? `<p class="small muted">Preparados con Claude el ${fechaEs(t.claude)}. Revísalos antes de generar los informes.</p>` : ''}
     <p class="small muted">Salen en la página 2 del informe de cada plan: la información fitosanitaria según el grupo de cultivo del plan y la situación actual para todos. Se guardan solos al salir de cada cuadro.</p>
     <div class="meses">${chips}</div>
     <label class="fld" style="margin-top:14px"><span><b>Situación actual y novedades</b> · para todos los planes</span><textarea data-tx="general" rows="6" placeholder="Cómo viene la campaña, el tiempo, novedades del sector, cambios de normativa…">${esc(t.general || '')}</textarea></label>
@@ -1333,11 +1335,36 @@ function renderTextos(v) {
   $$('[data-tm]', v).forEach((b) => { b.onclick = () => { ui.txtMes = +b.dataset.tm; renderTextos(v); }; });
   $$('[data-tx]', v).forEach((ta) => { ta.onchange = () => { commit((d) => { const o = d.textos[k] = d.textos[k] || { general: '', fito: {} }; o.fito = o.fito || {}; const r = ta.dataset.tx; if (r === 'general') o.general = ta.value.trim(); else o.fito[r.split('.')[1]] = ta.value.trim(); }, { render: false }); renderTextosChips(v); }; });
   $('#tInf', v).onclick = () => { ui.vista = 'informes'; ui.infMes = i; renderAll(); };
+  $('#tClaude', v).onclick = () => traerTextosPendientes(true);
   if ($('#tCop', v)) $('#tCop', v).onclick = () => {
     const lleno = (t.general || '').trim() || Object.values(t.fito || {}).some((x) => (x || '').trim());
     if (lleno && !confirm('¿Sustituir los textos de este mes por los del mes anterior?')) return;
     commit((d) => { d.textos[k] = structuredClone(prev); }); toast('Textos copiados: revísalos y cambia lo que haga falta');
   };
+}
+/* Textos redactados con Claude (tarea del día 20): Claude deja textos-pendientes.json en Drive y la app los carga aquí */
+let ultTextos = 0;
+async function traerTextosPendientes(forzar = false) {
+  if (conn !== 'listo' || offline || !db) return;
+  if (!forzar && Date.now() - ultTextos < 5 * 60000) return;
+  ultTextos = Date.now();
+  let r;
+  try { r = await NUBE.llamar('textosPendientes', {}, 30000); } catch (e) { if (forzar) toast(e.message || String(e), true); return; }
+  if (!r || !r.ok || !r.textos) { if (forzar) toast(r && r.error === 'acción desconocida' ? 'Falta actualizar el script de la hoja «Planes de abonado» (versión 1.5)' : 'No hay textos nuevos de Claude', !!(r && r.error)); return; }
+  let t; try { t = JSON.parse(r.textos); } catch (_) { toast('El archivo de textos de Claude no es válido', true); return; }
+  if (!/^\d{4}-\d{2}$/.test(String(t.mes || ''))) { toast('El archivo de textos de Claude no dice de qué mes es', true); return; }
+  const limpio = (x) => String(x || '').trim();
+  commit((d) => {
+    const o = d.textos[t.mes] = d.textos[t.mes] || { general: '', fito: {} };
+    o.fito = o.fito || {};
+    if (limpio(t.general)) o.general = limpio(t.general);
+    for (const g of CALC.GRUPOS) if (t.fito && limpio(t.fito[g])) o.fito[g] = limpio(t.fito[g]);
+    o.claude = t.creado || new Date().toISOString();
+  }, { render: false });
+  try { await NUBE.llamar('textosAplicados', { id: r.id }, 30000); } catch (_) { /* se volverá a cargar igual: no pasa nada */ }
+  const [y, m] = t.mes.split('-');
+  toast(`Textos de ${CALC.MESES[+m - 1].toLowerCase()} ${y} cargados (preparados con Claude). Revísalos en Textos.`);
+  renderAll();
 }
 function renderTextosChips(v) { const i = ui.txtMes, tt = db.textos[claveMes(ui.camp, i)]; const b = $(`[data-tm="${i}"]`, v); if (b) b.innerHTML = CALC.MESES[i].slice(0, 3) + (tt && ((tt.general || '').trim() || Object.values(tt.fito || {}).some((x) => (x || '').trim())) ? '<i></i>' : ''); }
 
