@@ -104,7 +104,7 @@
   const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   const C = {
     verde: [31, 95, 59], verde2: [63, 154, 100], verde3: [168, 213, 184], claro: [241, 247, 243], claro2: [246, 250, 247], borde: [219, 232, 223],
-    gris: [93, 122, 104], gris2: [138, 165, 150], tinta: [29, 43, 34], rojo: [192, 57, 43], azulF: [230, 239, 247], azulT: [36, 78, 117], azulT2: [74, 107, 138],
+    gris: [93, 122, 104], gris2: [138, 165, 150], tinta: [29, 43, 34], rojo: [192, 57, 43], azulD: [42, 120, 214], azulF: [230, 239, 247], azulT: [36, 78, 117], azulT2: [74, 107, 138],
     agua: [63, 182, 200], aguaF: [234, 246, 248], aguaT: [29, 74, 85], ambar: [255, 244, 214], ambarT: [122, 82, 0], morado: [233, 226, 247], moradoT: [90, 61, 153],
     t1: [223, 240, 229], nutr: [[42, 120, 214], [235, 104, 52], [27, 175, 122], [237, 161, 0], [232, 123, 164]], pista: [232, 239, 233]
   };
@@ -229,10 +229,10 @@
     for (let dd = 1; dd <= cal.total; dd++) {
       const c = cal.primerDia + dd - 1, fi = Math.floor(c / 7), co = c % 7;
       const cx = colR0 + 3 + cw * co + cw / 2, cy = y + 9 + fi * rh + rh / 2;
-      if (set.has(dd)) { doc.setFillColor(...C.azulF); doc.setDrawColor(...C.azulT2); doc.setLineWidth(0.3); doc.circle(cx, cy, 3.1, 'FD'); t(String(dd), cx, cy + 1.15, { f: 'b', s: 8, c: C.azulT, al: 'center' }); }
+      if (set.has(dd)) { doc.setFillColor(...C.azulD); doc.circle(cx, cy, 3.1, 'F'); t(String(dd), cx, cy + 1.15, { f: 'b', s: 8, c: [255, 255, 255], al: 'center' }); }
       else t(String(dd), cx, cy + 1.15, { s: 8, c: co >= 5 ? C.rojo : C.tinta, al: 'center' });
     }
-    doc.setFillColor(...C.azulF); doc.setDrawColor(...C.azulT2); doc.setLineWidth(0.3); doc.circle(colR0 + 1.6, y + ch + 3.4, 1.3, 'FD');
+    doc.setFillColor(...C.azulD); doc.circle(colR0 + 1.6, y + ch + 3.4, 1.3, 'F');
     t('día de riego', colR0 + 4.2, y + ch + 4.4, { s: 7.2, c: C.gris });
     y = Math.max(y + 31.5, y + ch + 6) + 6;
 
