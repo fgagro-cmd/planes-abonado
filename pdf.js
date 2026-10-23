@@ -229,10 +229,10 @@
     for (let dd = 1; dd <= cal.total; dd++) {
       const c = cal.primerDia + dd - 1, fi = Math.floor(c / 7), co = c % 7;
       const cx = colR0 + 3 + cw * co + cw / 2, cy = y + 9 + fi * rh + rh / 2;
-      if (set.has(dd)) { doc.setFillColor(...C.verde); doc.circle(cx, cy, 3.1, 'F'); t(String(dd), cx, cy + 1.15, { f: 'b', s: 8, c: [255, 255, 255], al: 'center' }); }
+      if (set.has(dd)) { doc.setFillColor(...C.azulF); doc.setDrawColor(...C.azulT2); doc.setLineWidth(0.3); doc.circle(cx, cy, 3.1, 'FD'); t(String(dd), cx, cy + 1.15, { f: 'b', s: 8, c: C.azulT, al: 'center' }); }
       else t(String(dd), cx, cy + 1.15, { s: 8, c: co >= 5 ? C.rojo : C.tinta, al: 'center' });
     }
-    doc.setFillColor(...C.verde); doc.circle(colR0 + 1.6, y + ch + 3.4, 1.3, 'F');
+    doc.setFillColor(...C.azulF); doc.setDrawColor(...C.azulT2); doc.setLineWidth(0.3); doc.circle(colR0 + 1.6, y + ch + 3.4, 1.3, 'FD');
     t('día de riego', colR0 + 4.2, y + ch + 4.4, { s: 7.2, c: C.gris });
     y = Math.max(y + 31.5, y + ch + 6) + 6;
 
