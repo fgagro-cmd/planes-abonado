@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.6.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -38,7 +38,7 @@ const TEXTO_PIE = 'Este programa de cálculo ha sido diseñado íntegramente par
 function dbVacia() {
   return {
     version: 1, creado: new Date().toISOString(), guardado: null,
-    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' } },
+    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' } },
     planes: [], analiticas: [], textos: {}
   };
 }
@@ -49,6 +49,7 @@ function migrar(d) {
   d.config.antiguedad = { ...v.config.antiguedad, ...(d.config.antiguedad || {}) };
   d.config.mx = d.config.mx || { url: '', clave: '' };
   d.config.pie = { ...v.config.pie, ...(d.config.pie || {}) };
+  d.config.planAnual = { ...v.config.planAnual, ...(d.config.planAnual || {}) };
   d.textos = d.textos || {};
   d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
@@ -230,7 +231,7 @@ async function procesarPendientes() {
     for (const x of lista) {
       const m = x.meta || {};
       const blob = await NUBE.leerPdf(x.id);
-      const ruta = await ALM.guardarPDF(m.carpeta || 'Sin carpeta', x.nombre, blob);
+      const ruta = m.tipo === 'raiz' ? await ALM.guardarEnRaiz(m.carpeta || CARPETA_INFORMES, x.nombre, blob) : await ALM.guardarPDF(m.carpeta || 'Sin carpeta', x.nombre, blob);
       if (m.tipo === 'informe') await ALM.guardarEnRaiz(CARPETA_INFORMES, x.nombre, blob);
       await NUBE.borrarPdf(x.id);
       commit((d) => {
@@ -285,6 +286,7 @@ function renderAll() {
   if (ui.vista === 'planes') renderPlanes(v);
   else if (ui.vista === 'informes') renderInformes(v);
   else if (ui.vista === 'textos') renderTextos(v);
+  else if (ui.vista === 'registros') renderRegistros(v);
   else if (ui.vista === 'analiticas') renderAnaliticas(v);
   else if (ui.vista === 'avisos') renderAvisos(v);
   else if (ui.vista === 'repartos') renderRepartos(v);
@@ -379,7 +381,7 @@ function renderDetalle(el) {
   }
   const nAv = (d) => av.filter((a) => a.donde === d).length;
   const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto'], ['fert', 'Fertirrigación']];
-  el.innerHTML = `<div class="card"><div class="cab"><button class="btn peq solo-compacto" id="dLista" title="Volver a la lista de planes">‹ Planes</button><div class="t"><h2>${esc(p.nombre)}</h2>
+  el.innerHTML = `<div class="card ${ui.tab === 'fert' ? 'card-fert' : ''}"><div class="cab"><button class="btn peq solo-compacto" id="dLista" title="Volver a la lista de planes">‹ Planes</button><div class="t"><h2>${esc(p.nombre)}</h2>
       <div class="muted">${esc(p.cliente)} › ${esc(p.finca)} · ${esc(p.cultivo)} · ${fmt(p.superficie, 2)} ha · ${fmt(p.arboles, 0)} árboles</div>
       <div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
     ${camp ? kp : `<div class="aviso alto" style="margin-top:12px"><span>Este plan no tiene datos de la campaña <b>${esc(ui.camp)}</b>.</span><span class="spacer"></span>${Object.keys(p.campanas || {}).length ? `<button class="btn peq" id="dCrear">Crearla copiando de ${esc(Object.keys(p.campanas).sort().slice(-1)[0])}</button>` : `<button class="btn peq" id="dCrear">Crearla vacía</button>`}</div>`}
@@ -606,7 +608,7 @@ function editarAnalitica(a, paraPlan = null) {
     campos = `<div class="grid4">
       <label class="fld"><span>Textura</span><select data-avt="textura">${['Arenosa', 'Franca', 'Arcillosa'].map((t) => `<option ${CALC.texturaTabla(v.textura) === CALC.texturaTabla(t) && v.textura ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       ${f('Densidad (g/cm³)', 'densidad', v.densidad)}${f('CE (mS/cm)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}
-      ${f('Materia orgánica (%)', 'mo', v.mo)}${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}</div>
+      ${f('Materia orgánica (%)', 'mo', v.mo)}${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}${f('Fósforo P Olsen (mg/kg)', 'p', v.p)}</div>
       <h3 style="margin-top:14px">Cationes</h3><div class="grid4">${['k', 'ca', 'mg', 'na'].map((k) => `<label class="fld"><span>${{ k: 'Potasio (K)', ca: 'Calcio (Ca)', mg: 'Magnesio (Mg)', na: 'Sodio (Na)' }[k]} ${unidad(k)}</span><input data-av="${k}" value="${esc(fmtIn(v[k]))}"></label>`).join('')}</div>`;
   } else if (a.tipo === 'agua') {
     campos = `<div class="grid4">${f('CE (dS/m)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}${f('Nitratos NO3 (mg/L)', 'no3', v.no3)}${f('Fósforo P (mg/L)', 'p', v.p)}
@@ -981,13 +983,19 @@ function tabFert(el, p, camp) {
   const ant = campAnteriorCon(p, i);
   const conLineas = (k) => camp.fert && camp.fert[k] && camp.fert[k].lineas && camp.fert[k].lineas.length;
   const chips = CALC.MESES.map((mm, k) => `<button class="mes-chip ${k === i ? 'on' : ''}" data-mes="${k}">${mm.slice(0, 3)}${conLineas(k) ? '<i></i>' : ''}</button>`).join('');
-  const comp = NUT_TXT.map((nu, j) => {
-    const o = obj ? obj[j] : null, a = m.uf[j];
-    const dif = o == null ? null : a - o;
-    const pc = o ? a / o * 100 : null;
-    const clase = o == null || (!o && !a) ? '' : (o && Math.abs(dif) / o <= 0.1) || (!o && a < 0.5) ? 'chip v' : 'chip amb';
-    return `<tr><td><b>${nu}</b></td><td class="n">${o == null ? '–' : fmt(o, 1)}</td><td class="n"><b>${fmt(a, 1)}</b></td><td class="n">${dif == null ? '–' : (dif > 0 ? '+' : '') + fmt(dif, 1)}</td><td class="n">${pc == null ? '' : `<span class="${clase}">${fmt(pc, 0)} %</span>`}</td></tr>`;
-  }).join('');
+  const celObj = (j) => { const o = obj ? obj[j] : null, a = m.uf[j]; const pc = o ? a / o * 100 : null; const ok = o == null || (!o && !a) ? '' : (o && Math.abs(a - o) / o <= 0.1) || (!o && a < 0.5) ? 'v' : 'amb'; return { o, a, pc, ok }; };
+  const comp = `<table class="t obj"><tr><th>kg UF/ha</th>${NUT_TXT.map((nu) => `<th class="n">${nu}</th>`).join('')}</tr>
+    <tr><td class="muted">Objetivo</td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n">${c.o == null ? '–' : fmt(c.o, 1)}</td>`; }).join('')}</tr>
+    <tr><td><b>Plan</b></td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n"><b>${fmt(c.a, 1)}</b>${c.pc == null ? '' : ` <span class="chip ${c.ok}">${fmt(c.pc, 0)} %</span>`}</td>`; }).join('')}</tr></table>`;
+  // Totales por producto: del mes y de la campaña
+  const sup = +p.superficie || 0;
+  const totCamp = new Map();
+  for (let k = 0; k < 12; k++) for (const l of FERT.mes(p, camp, k, ix).lineas) {
+    const nom = l.prod ? l.prod.nombre : l.nombre; if (!nom) continue;
+    const t = totCamp.get(nom) || { nom, liq: l.liquido, meses: new Set(), total: 0, hasta: 0 };
+    t.meses.add(k); t.total += l.w * sup; if (k <= i) t.hasta += l.w * sup; totCamp.set(nom, t);
+  }
+  const listaCamp = [...totCamp.values()].sort((a, b) => b.total - a.total);
   const filas = m.lineas.map((l, k) => `<tr>
       <td><input class="cell izq combo-in" data-cb="prod" data-k2="${k}" value="${esc(l.prod ? l.prod.nombre : l.nombre || '')}" placeholder="Escribe para buscar…" autocomplete="off" ${l.prod || !l.nombre ? '' : 'title="No está en Productos"'}>${!l.prod && l.nombre ? '<div class="small" style="color:var(--warn)">No está en Productos</div>' : ''}</td>
       <td class="w"><input class="cell" data-fl="${k}" data-c="dosis" value="${fmtIn(l.dosis)}"></td>
@@ -997,6 +1005,7 @@ function tabFert(el, p, camp) {
       <td><select class="cell izq" data-fl="${k}" data-c="tanque"><option value="">Auto (${esc(l.tanqueAuto ? l.tanqueFinal : (l.prod ? (l.prod.tanque === 'E' ? 'E' : l.prod.tanque) : '1'))})</option>${TANQUES.map((t) => `<option ${!l.tanqueAuto && l.tanqueFinal === t ? 'selected' : ''}>${t}</option>`).join('')}</select></td>
       <td class="n">${fmt(l.porRiegoFinca, 2)} ${l.liquido ? 'L' : 'kg'}</td>
       <td class="n">${fmt(l.porPie, 1)} ${l.liquido ? 'cc' : 'g'}</td>
+      <td class="n tot-mes"><b>${fmt(l.w * sup, 1)} ${l.liquido ? 'L' : 'kg'}</b></td>
       <td class="n">${fmt(l.uf.n, 1)}</td><td class="n">${fmt(l.uf.p2o5, 1)}</td><td class="n">${fmt(l.uf.k2o, 1)}</td>
       <td><button class="btn peq rojo" data-fdel="${k}" title="Quitar">×</button></td></tr>`).join('');
   // Resumen por tanque
@@ -1008,17 +1017,11 @@ function tabFert(el, p, camp) {
   const inf = camp.informes && camp.informes[i];
   const rango = (x, r) => (x == null ? '–' : `<span class="${x < r[0] || x > r[1] ? 'chip amb' : 'chip v'}">${fmt(x, 0)} %</span> <span class="muted small">${r[0]}-${r[1]}</span>`);
   el.innerHTML = `<div class="meses">${chips}</div>
-    <div class="grid2" style="margin-top:12px">
-      <div><h3>${CALC.MESES[i]} · objetivo y plan (kg UF/ha)</h3>
-        <table class="t"><tr><th></th><th class="n">Objetivo</th><th class="n">Plan</th><th class="n">Diferencia</th><th class="n">%</th></tr>${comp}</table>
-        ${!obj ? '<p class="small muted">Sin objetivo: elige el tipo de reparto y las necesidades en «Necesidades y reparto».</p>' : ''}</div>
-      <div><h3>Riego de ${CALC.MESES[i].toLowerCase()}</h3>
-        <div class="row small"><span class="chip">${rg.n || 0} riegos de ${hhmm(rg.h) || '0:00'} h</span><span class="chip">${fmt(rg.vApl, 0)} m³/ha</span><span class="chip">${fmt(rg.vFinca, 0)} m³ en la finca</span></div>
-        ${htmlCalendario(p, cal, rg)}
-        <div class="tanques" style="margin-top:10px">${resumenT || '<p class="muted small">Sin productos este mes.</p>'}</div></div></div>
-    <h3 style="margin-top:16px">Productos</h3>
-    <div class="scroll-x"><table class="t fert"><tr><th>Producto</th><th class="n">Dosis/riego</th><th>Unidad</th><th class="n">Riegos</th><th>Periodo</th><th>Tanque</th><th class="n">Por riego finca</th><th class="n">Por pie</th><th class="n">N</th><th class="n">P2O5</th><th class="n">K2O</th><th></th></tr>
-      ${filas || '<tr><td colspan="12" class="muted">Sin productos este mes.</td></tr>'}</table></div>
+    <div class="obj-fijo"><h3>${CALC.MESES[i]} · objetivo y plan</h3>${comp}
+      ${!obj ? '<p class="small muted" style="margin:4px 0 0">Sin objetivo: elige el tipo de reparto y las necesidades en «Necesidades y reparto».</p>' : ''}</div>
+    <h3 style="margin-top:12px">Productos</h3>
+    <div class="scroll-x"><table class="t fert"><tr><th>Producto</th><th class="n">Dosis/riego</th><th>Unidad</th><th class="n">Riegos</th><th>Periodo</th><th>Tanque</th><th class="n">Por riego finca</th><th class="n">Por pie</th><th class="n">Total mes</th><th class="n">N</th><th class="n">P2O5</th><th class="n">K2O</th><th></th></tr>
+      ${filas || '<tr><td colspan="13" class="muted">Sin productos este mes.</td></tr>'}</table></div>
     ${m.sinProducto ? `<div class="aviso" style="margin-top:8px">${plural(m.sinProducto, 'producto no está', 'productos no están')} en la base de datos de Productos: no suman UF. ${db.productos.length ? 'Elígelos en la lista o dalos de alta en Productos.' : 'Importa antes tus productos (sección Productos).'}</div>` : ''}
     <div class="row" style="margin-top:10px">
       <button class="btn peq" id="fAdd">+ Añadir producto</button>
@@ -1027,6 +1030,13 @@ function tabFert(el, p, camp) {
       <button class="btn peq p" id="fAjus" ${obj && m.lineas.length ? '' : 'disabled'}>Ajustar al objetivo</button>
       <button class="btn peq" id="fTq" ${m.lineas.some((l) => !l.tanqueAuto) ? '' : 'disabled'}>Tanques automáticos</button>
       <span class="spacer"></span><button class="btn peq rojo" id="fVac" ${m.lineas.length ? '' : 'disabled'}>Vaciar mes</button></div>
+    <div class="grid2" style="margin-top:16px">
+      <div><h3>Riego de ${CALC.MESES[i].toLowerCase()}</h3>
+        <div class="row small"><span class="chip">${rg.n || 0} riegos de ${hhmm(rg.h) || '0:00'} h</span><span class="chip">${fmt(rg.vApl, 0)} m³/ha</span><span class="chip">${fmt(rg.vFinca, 0)} m³ en la finca</span></div>
+        ${htmlCalendario(p, cal, rg)}</div>
+      <div><h3>Por depósito</h3><div class="tanques">${resumenT || '<p class="muted small">Sin productos este mes.</p>'}</div>
+        <details style="margin-top:14px" ${ui.verCamp !== false ? 'open' : ''} id="fCampD"><summary style="cursor:pointer"><b class="small">Productos de la campaña ${esc(ui.camp)}</b> <span class="small muted">(total en la finca)</span></summary>
+          ${listaCamp.length ? `<table class="t small" style="margin-top:6px"><tr><th>Producto</th><th class="n">Meses</th><th class="n">Hasta ${CALC.MESES[i].slice(0, 3).toLowerCase()}</th><th class="n">Campaña</th></tr>${listaCamp.map((t) => `<tr><td>${esc(t.nom)}</td><td class="n">${t.meses.size}</td><td class="n">${fmt(t.hasta, 1)} ${t.liq ? 'L' : 'kg'}</td><td class="n"><b>${fmt(t.total, 1)} ${t.liq ? 'L' : 'kg'}</b></td></tr>`).join('')}</table>` : '<p class="muted small">Sin productos en la campaña.</p>'}</details></div></div>
     <label class="fld" style="margin-top:14px"><span>Observaciones de ${CALC.MESES[i].toLowerCase()} (salen en el informe, antes del ácido de limpieza y los recintos)</span><textarea id="fObs" rows="2" placeholder="p. ej. Revisar filtros antes del primer riego">${esc(fm.obs || '')}</textarea></label>
     <div class="row" style="margin-top:12px"><button class="btn" id="fInf">Informe PDF de ${CALC.MESES[i].toLowerCase()}</button>
       <label class="chk small"><input type="checkbox" id="fRev" ${inf && inf.revisado ? 'checked' : ''}> Revisado</label>
@@ -1054,6 +1064,7 @@ function tabFert(el, p, camp) {
   }));
   $$('[data-fdel]', el).forEach((b) => { b.onclick = () => guardarLineas((ls) => ls.splice(+b.dataset.fdel, 1)); });
   $('#fSolD', el).ontoggle = (e) => { ui.verSol = e.target.open; };
+  $('#fCampD', el).ontoggle = (e) => { ui.verCamp = e.target.open; };
   enlazarCalendario(el, p, camp, i, cal);
   $('#fObs', el).onchange = (e) => { commit(() => { camp.fert = camp.fert || {}; camp.fert[i] = camp.fert[i] || { lineas: [] }; camp.fert[i].obs = e.target.value.trim(); }, { render: false }); };
   $('#fRev', el).onchange = (e) => { commit(() => { marcarRevisado(camp, i, e.target.checked); }, { render: false }); renderEstado(); };
@@ -1122,6 +1133,24 @@ function enlazarCalendario(el, p, camp, i, cal) {
 const CARPETA_INFORMES = 'Planes de abonado';
 const claveMes = (camp, i) => `${camp}-${String(i + 1).padStart(2, '0')}`;
 function marcarRevisado(camp, i, si) { camp.informes = camp.informes || {}; camp.informes[i] = { ...(camp.informes[i] || {}), revisado: !!si }; }
+/* Recomendaciones de analítica para el informe (mismo criterio que los avisos: Ajustes › Avisos y normativa) */
+function analiticasInforme(p, camp) {
+  const A = analDePlan(p), T = db.config.antiguedad || {}, marcas = [], recs = [];
+  const mesAnio = (iso) => { const [y, m] = String(iso || '').slice(0, 7).split('-'); return m ? `${m}/${y}` : ''; };
+  const mesLargo = (iso) => { const [y, m] = String(iso || '').slice(0, 7).split('-'); return m ? `${CALC.MESES[+m - 1].toLowerCase()} de ${y}` : ''; };
+  const porque = { suelo: 'Con ella ajustamos mejor el nitrógeno que aporta el suelo, la materia orgánica y el equilibrio de nutrientes.', agua: 'Con una analítica al día ajustamos mejor lo que aporta el agua, las sales y el ácido para los goteros.', estiercol: 'Conocer su riqueza real permite descontarlo bien del abonado.' };
+  const nom = { suelo: 'suelo', agua: 'agua', estiercol: 'estiércol' };
+  const revisar = (tipo, a) => {
+    const max = +T[tipo] || (tipo === 'suelo' ? 4 : tipo === 'agua' ? 2 : 1);
+    if (!a || a.plantilla || !a.fecha) { recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `No tenemos una analítica de ${nom[tipo]} de esta finca. ${porque[tipo]}` }); return; }
+    const e = CALC.edadAnios(a.fecha);
+    if (e != null && e > max) recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `La última es de ${mesLargo(a.fecha)} y tiene más de ${plural(max, 'año', 'años')}. ${porque[tipo]}` });
+    else marcas.push(`Analítica de ${nom[tipo]} ${mesAnio(a.fecha)} al día`);
+  };
+  revisar('suelo', A.suelo); revisar('agua', A.agua);
+  for (const e of (camp && camp.estiercoles) || []) { const a = A.estiercoles[e.analId]; if (+e.dosis > 0) revisar('estiercol', a); }
+  return { marcas, recs, A };
+}
 function datosInforme(p, campKey, i) {
   const camp = p.campanas[campKey];
   const ix = ixProd();
@@ -1131,13 +1160,17 @@ function datosInforme(p, campKey, i) {
   const b = CALC.balanceN(p, camp, A, 'estimado', cfg());
   const uf12 = CALC.MESES.map((_, k) => FERT.mes(p, camp, k, ix).uf);
   const sup = +p.superficie || 0;
-  const lineas = m.lineas.map((l) => ({ nombre: l.prod ? l.prod.nombre : l.nombre, porPie: l.porPie, porRiego: l.porRiegoFinca, riegos: l.riegos, periodo: l.periodo, tanque: l.tanqueFinal, liquido: l.liquido, total: l.w * sup }));
+  const lineas = m.lineas.map((l) => ({ nombre: l.prod ? l.prod.nombre : l.nombre, porPie: `${fmt(l.porPie, 1)} ${l.liquido ? 'cc' : 'g'}`, porRiego: `${fmt(l.porRiegoFinca, l.porRiegoFinca < 10 ? 2 : 1)} ${l.liquido ? 'L' : 'kg'}`, riegos: l.riegos, periodo: l.periodo, tanque: l.tanqueFinal, liquido: l.liquido, total: l.w * sup }));
   const tot = new Map();
   for (const l of lineas) { const k = l.nombre; const t = tot.get(k) || { nombre: k, total: 0, u: l.liquido ? 'L' : 'kg' }; t.total += l.total; tot.set(k, t); }
   const t = db.textos[claveMes(campKey, i)] || {};
   const acum = [0, 1, 2].map((j) => uf12.slice(0, i + 1).reduce((s, x) => s + (+x[j] || 0), 0));
   const total = [0, 1, 2].map((j) => uf12.reduce((s, x) => s + (+x[j] || 0), 0));
   const pie = db.config.pie || {};
+  const an = analiticasInforme(p, camp);
+  const marcas = ['Riego ajustado al clima de la zona', ...an.marcas];
+  if (p.vulnerable && !b.excede && !b.excedeOrg) marcas.push('Zona vulnerable: dentro del límite de nitrógeno');
+  const aguaOk = A.agua && !A.agua.plantilla;
   return {
     plan: p, anio: campKey, mes: i, logo: logoCache, cliente: p.titular || p.cliente, cultivo: p.cultivo || p.tipoCultivo,
     riego: { n: rg.n || 0, h: rg.h || 0 }, cal: FERT.calendario(p, camp, campKey, i), arboles: p.arboles, superficie: p.superficie, vulnerable: !!p.vulnerable,
@@ -1147,9 +1180,10 @@ function datosInforme(p, campKey, i) {
     vistazo: {
       uf12, agua12: r.filas.map((f) => f.vApl || 0), nAcum: acum, nTotal: total,
       origenN: { suelo: (b.E1 || 0) + (b.E2 || 0), agua: b.E4 || 0, estiercol: b.E3 || 0, abono: Math.max(0, b.aporte || 0) },
-      dentroLimite: !b.excede && !b.excedeOrg,
-      analSuelo: A.suelo && !A.suelo.plantilla ? A.suelo.fecha : null, analAgua: A.agua && !A.agua.plantilla ? A.agua.fecha : null
+      dentroLimite: !b.excede && !b.excedeOrg
     },
+    aguaAporta: aguaOk ? { dosis: b.dosisRiego, uf: CALC.aportesAgua(A.agua, b.dosisRiego) } : null,
+    marcas, recomendaciones: an.recs, autor: db.config.autor || '',
     pie: { texto: pie.texto || '', telefono: pie.telefono || '', email: pie.email || '' }
   };
 }
@@ -1246,11 +1280,12 @@ function renderInformes(v) {
     if (ui.infFiltro === 'pend' && e.inf && e.inf.revisado) return false;
     if (ui.infFiltro === 'rev' && !(e.inf && e.inf.revisado && !e.inf.fecha)) return false;
     if (ui.infFiltro === 'avisos' && (e.sinCamp || e.nivel === 'ok')) return false;
+    if (ui.infFiltro === 'sinpdf' && (e.sinCamp || (e.inf && e.inf.fecha))) return false;
     return true;
   }).sort((a, b) => (a.p.cliente || '').localeCompare(b.p.cliente || '', 'es') || (a.p.nombre || '').localeCompare(b.p.nombre || '', 'es'));
   const chips = CALC.MESES.map((mm, k) => `<button class="mes-chip ${k === i ? 'on' : ''}" data-im="${k}">${mm.slice(0, 3)}</button>`).join('');
   const estadoPdf = (inf) => (inf.fecha ? `<span class="chip ${inf.pendiente ? 'amb' : 'v'}" title="${esc(inf.ruta || 'Pendiente de pasar a OneDrive')}">${fechaEs(inf.fecha)}${inf.pendiente ? ' · en Drive' : ''}</span>` : '<span class="muted small">–</span>');
-  const filtros = [['todos', 'Todos'], ['pend', 'Sin revisar'], ['rev', 'Revisados sin PDF'], ['avisos', 'Con avisos']];
+  const filtros = [['todos', 'Todos'], ['pend', 'Sin revisar'], ['rev', 'Revisados sin PDF'], ['sinpdf', 'Sin PDF'], ['avisos', 'Con avisos']];
   v.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Informes de ${esc(mesTxt)} ${esc(ui.camp)}</h2><span class="spacer"></span>
       <button class="btn" id="iPrep" title="Copia el mismo mes de la campaña anterior (o el mes anterior) en los planes que aún no tienen productos este mes">Preparar ${esc(mesTxt)}</button>
       <button class="btn" id="iTxt">Textos del mes</button>
@@ -1318,6 +1353,7 @@ function renderInformes(v) {
 }
 
 /* ---------- TEXTOS de la página 2 (por mes) ---------- */
+const MAX_TEXTO = 450; // caracteres por cuadro para que el informe quepa en 2 páginas
 function renderTextos(v) {
   if (ui.txtMes == null) ui.txtMes = ui.infMes == null ? mesInforme() : ui.infMes;
   const i = ui.txtMes, k = claveMes(ui.camp, i);
@@ -1332,10 +1368,12 @@ function renderTextos(v) {
     ${t.claude ? `<p class="small muted">Preparados con Claude el ${fechaEs(t.claude)}. Revísalos antes de generar los informes.</p>` : ''}
     <p class="small muted">Salen en la página 2 del informe de cada plan: la información fitosanitaria según el grupo de cultivo del plan y la situación actual para todos. Se guardan solos al salir de cada cuadro.</p>
     <div class="meses">${chips}</div>
-    <label class="fld" style="margin-top:14px"><span><b>Situación actual y novedades</b> · para todos los planes</span><textarea data-tx="general" rows="6" placeholder="Cómo viene la campaña, el tiempo, novedades del sector, cambios de normativa…">${esc(t.general || '')}</textarea></label>
+    <label class="fld" style="margin-top:14px"><span><b>Situación actual y novedades</b> · para todos los planes</span><textarea data-tx="general" rows="6" placeholder="Cómo viene la campaña, el tiempo, novedades del sector, cambios de normativa…">${esc(t.general || '')}</textarea><span class="contador" data-cont="general"></span></label>
     <h3 style="margin-top:18px">Información fitosanitaria</h3>
-    <div class="grid2">${CALC.GRUPOS.map((g) => `<label class="fld"><span><b>${nombreG[g] || g}</b> · ${plural(nPorGrupo[g], 'plan', 'planes')}</span><textarea data-tx="fito.${g}" rows="6" placeholder="${nPorGrupo[g] ? 'Plagas y enfermedades del momento, umbrales, tratamientos recomendados…' : 'Ningún plan de este grupo'}">${esc((t.fito || {})[g] || '')}</textarea></label>`).join('')}</div></div>`;
+    <div class="grid2">${CALC.GRUPOS.map((g) => `<label class="fld"><span><b>${nombreG[g] || g}</b> · ${plural(nPorGrupo[g], 'plan', 'planes')}</span><textarea data-tx="fito.${g}" rows="6" placeholder="${nPorGrupo[g] ? 'Plagas y enfermedades del momento, umbrales, tratamientos recomendados…' : 'Ningún plan de este grupo'}">${esc((t.fito || {})[g] || '')}</textarea><span class="contador" data-cont="fito.${g}"></span></label>`).join('')}</div></div>`;
   $$('[data-tm]', v).forEach((b) => { b.onclick = () => { ui.txtMes = +b.dataset.tm; renderTextos(v); }; });
+  const contar = (ta) => { const n = ta.value.trim().length, c = $(`[data-cont="${ta.dataset.tx}"]`, v); if (!c) return; c.textContent = n ? `${n} / ${MAX_TEXTO} caracteres${n > MAX_TEXTO ? ' · largo: el informe puede pasar a 3 páginas' : ''}` : ''; c.className = 'contador' + (n > MAX_TEXTO ? ' largo' : ''); };
+  $$('[data-tx]', v).forEach((ta) => { contar(ta); ta.addEventListener('input', () => contar(ta)); });
   $$('[data-tx]', v).forEach((ta) => { ta.onchange = () => { commit((d) => { const o = d.textos[k] = d.textos[k] || { general: '', fito: {} }; o.fito = o.fito || {}; const r = ta.dataset.tx; if (r === 'general') o.general = ta.value.trim(); else o.fito[r.split('.')[1]] = ta.value.trim(); }, { render: false }); renderTextosChips(v); }; });
   $('#tInf', v).onclick = () => { ui.vista = 'informes'; ui.infMes = i; renderAll(); };
   $('#tClaude', v).onclick = () => traerTextosPendientes(true);
@@ -1606,6 +1644,10 @@ function renderAjustes(v) {
       <label class="fld" style="margin-top:10px"><span>Texto del pie del informe mensual (página 2)</span><textarea id="aPieT" rows="4">${esc((c.pie || {}).texto || '')}</textarea></label>
       <div class="grid2" style="margin-top:10px"><label class="fld"><span>Teléfono</span><input id="aPieTel" value="${esc((c.pie || {}).telefono || '')}" inputmode="tel"></label><label class="fld"><span>Email</span><input id="aPieMail" value="${esc((c.pie || {}).email || '')}" inputmode="email"></label></div>
       <p class="small muted">Se guardan en tus datos de Drive, no en el código de la app.</p></div>
+    <div class="card"><h3>Plan de abonado anual (Registros)</h3>
+      <label class="fld"><span>Forma de aplicación y maquinaria</span><textarea id="aPaApl" rows="3" placeholder="${esc(TEXTO_APLICACION)}">${esc((c.planAnual || {}).aplicacion || '')}</textarea></label>
+      <label class="fld" style="margin-top:10px"><span>Medidas para reducir emisiones de amoniaco y gases de efecto invernadero</span><textarea id="aPaMed" rows="4" placeholder="${esc(TEXTO_MEDIDAS)}">${esc((c.planAnual || {}).medidas || '')}</textarea></label>
+      <p class="small muted">Vacío = el texto de ejemplo que se ve en gris.</p></div>
     <div class="card"><h3>Copia de seguridad</h3><div class="row"><button class="btn" id="aExp">Descargar copia (.json)</button><label class="btn">Restaurar copia…<input type="file" id="aRes" accept=".json,application/json" hidden></label></div></div>
   </div>
   <div>
@@ -1651,6 +1693,8 @@ function renderAjustes(v) {
   if (enl) enl.onclick = () => { let n = 0; commit((d) => { for (const p of d.planes) if (!p.mxFin && enlazarPlan(p, false)) n++; }); toast(`Enlazados ${plural(n, 'plan', 'planes')} más`); };
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
+  $('#aPaApl').onchange = (e) => commit((d) => { d.config.planAnual.aplicacion = e.target.value.trim(); }, { render: false });
+  $('#aPaMed').onchange = (e) => commit((d) => { d.config.planAnual.medidas = e.target.value.trim(); }, { render: false });
   $('#aPieT').onchange = (e) => commit((d) => { d.config.pie.texto = e.target.value.trim(); }, { render: false });
   $('#aPieTel').onchange = (e) => commit((d) => { d.config.pie.telefono = e.target.value.trim(); }, { render: false });
   $('#aPieMail').onchange = (e) => commit((d) => { d.config.pie.email = e.target.value.trim(); }, { render: false });

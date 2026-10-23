@@ -29,6 +29,12 @@ App de **escritorio** (Edge o Chrome en Windows) para los planes de fertirrigaci
 - **Textos**: información fitosanitaria por grupo (cítricos, frutales, almendro, olivos) y situación actual, por mes.
 - **Informes**: lista del mes con el estado de cada plan, «Preparar mes» (copia el mismo mes de la campaña anterior o el mes anterior en los planes vacíos), marcar revisados y generar los PDF de los revisados en `Clientes/<carpeta>/Planes de abonado/` y una copia en `Planes de abonado/` (raíz de Asesoramiento agrícola). En la tablet quedan en Drive y el ordenador los pasa.
 - El pie del informe (texto, teléfono y email) se escribe en Ajustes y se guarda en Drive, no en el código.
+**Versión 1.6:**
+- **Informe mensual con diseño nuevo** (fuente Inter incluida en `vendor/fuentes-inter.js`, licencia OFL): calendario con círculos, roscas de unidades fertilizantes, agua del mes y de la campaña; página 2 con lo que aporta el agua de riego, marcas de lo comprobado y recomendación de analítica (suelo > 4 años, agua > 2, estiércol > 1, o sin analítica; se cambia en Ajustes). Si los textos son largos, los bloques pasan a una página 3 sin cortarse. Contador de caracteres en Textos.
+- **Fertirrigación**: objetivo y plan del mes fijo arriba mientras se ajustan las dosis, columna «Total mes» y totales por producto de la campaña.
+- **Informes**: filtro «Sin PDF».
+- **Registros** (sección nueva): registro de fertilización, registro de riego, plan de abonado anual (RD 1051/2022) y productos para pedidos, por intervalo de meses, un PDF por plan o por cliente. Textos de aplicación y medidas del plan anual en Ajustes.
+
 **Versión 1.5:** los textos del mes se pueden preparar con Claude (tarea programada del día 20). Tras confirmarlos, Claude deja `textos-pendientes.json` en Drive › Apps › Planes de abonado y la app los carga sola en Textos al abrirse (o con «Buscar textos de Claude»); después el archivo pasa a `Copias`.
 - El script tiene la acción `enviados`, que usa la app Asesor para marcar «Enviado» los meses con todos los informes generados.
 

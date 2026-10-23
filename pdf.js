@@ -95,302 +95,498 @@
   }
 
 
-  /* ================= INFORME MENSUAL (fase 4) =================
-     d = { plan, anio, mes (0-11), logo, cliente, cultivo, riego:{n,h}, cal:{dias,total,primerDia}, arboles, superficie, vulnerable,
-           lineas:[{nombre, porPie, uPie, porRiego, uRiego, riegos, periodo, tanque}], totales:[{nombre, total, u}],
-           ufMes:[N,P2O5,K2O,CaO,MgO] kg UF/ha, aguaMes, aguaAnio (m3 finca), obs, acido:{nitrico,fosforico}|null, recintos,
-           textos:{fito, general}, vistazo:{ uf12:[[5]x12], agua12:[m3/ha x12], nAcum:[3], nTotal:[3],
-             origenN:{suelo, agua, estiercol, abono, extraccion}, nPlan, analSuelo, analAgua, eto:true }, pie:{texto, telefono, email} } */
+  /* ================= INFORME MENSUAL · diseño 1.6 (verde campo) =================
+     d = { anio, mes, logo, cliente, cultivo, riego:{n,h}, cal:{dias,total,primerDia}, arboles, superficie, vulnerable,
+           lineas:[{nombre, porPie, uPie, porRiego, uRiego, riegos, periodo, tanque}], totales:[{nombre,total,u}], ufMes[5],
+           aguaMes, aguaAnio (m3 finca), obs, acido, recintos, textos:{fito, general},
+           vistazo:{uf12, agua12, nAcum, nTotal, origenN, dentroLimite}, aguaAporta:{dosis, uf[5]}|null,
+           marcas:[texto], recomendaciones:[{titulo, texto}], autor, pie:{texto, telefono, email} } */
   const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-  const OSCURO = [33, 87, 50], CLARO = [226, 239, 218], TINTA = [24, 36, 29], LINEA = [170, 190, 175];
-  const AZUL = [91, 155, 213], AZUL_CL = [189, 215, 238], ROJO = [200, 30, 30];
-  const COL = [[42, 120, 214], [235, 104, 52], [27, 175, 122], [237, 161, 0], [232, 123, 164]];
+  const C = {
+    verde: [31, 95, 59], verde2: [63, 154, 100], verde3: [168, 213, 184], claro: [241, 247, 243], claro2: [246, 250, 247], borde: [219, 232, 223],
+    gris: [93, 122, 104], gris2: [138, 165, 150], tinta: [29, 43, 34], rojo: [192, 57, 43], azulF: [230, 239, 247], azulT: [36, 78, 117], azulT2: [74, 107, 138],
+    agua: [63, 182, 200], aguaF: [234, 246, 248], aguaT: [29, 74, 85], ambar: [255, 244, 214], ambarT: [122, 82, 0], morado: [233, 226, 247], moradoT: [90, 61, 153],
+    t1: [223, 240, 229], nutr: [[42, 120, 214], [235, 104, 52], [27, 175, 122], [237, 161, 0], [232, 123, 164]], pista: [232, 239, 233]
+  };
+  const NUTR = ['N', 'P₂O₅', 'K₂O', 'CaO', 'MgO'];
+  const W = 210, M = 12, D = W - M, AN = D - M;
+  const num = (v, dd = 1) => (v == null || !Number.isFinite(+v) ? '–' : (+v).toLocaleString('es-ES', { minimumFractionDigits: dd, maximumFractionDigits: dd }));
+  const hm = (h) => { h = +h || 0; if (!h) return '0:00'; let H = Math.floor(h), Mi = Math.round((h - H) * 60); if (Mi === 60) { H++; Mi = 0; } return `${H}:${String(Mi).padStart(2, '0')}`; };
   const tinte = (c, k) => c.map((v) => Math.round(v + (255 - v) * k));
-  const hm = (h) => { h = +h || 0; if (!h) return '0:00'; let H = Math.floor(h), M = Math.round((h - H) * 60); if (M === 60) { H++; M = 0; } return `${H}:${String(M).padStart(2, '0')}`; };
-  const mesAnio = (iso) => { if (!iso) return 'sin fecha'; const [y, m] = String(iso).slice(0, 7).split('-'); return m ? `${m}/${y}` : y; };
 
-  function logoEn(doc, logo, x, y, h, maxW, centro = false) {
-    if (!logo) return 0;
-    try { const p = doc.getImageProperties(logo); const w = Math.min(maxW, h * p.width / p.height); doc.addImage(logo, centro ? x - w / 2 : x, y, w, h); return w; } catch (_) { return 0; }
+  function fuentes(doc) {
+    const F = root.FUENTES;
+    if (!F) return false;
+    doc.addFileToVFS('Inter-Regular.ttf', F.regular); doc.addFont('Inter-Regular.ttf', 'Inter', 'normal');
+    doc.addFileToVFS('Inter-Bold.ttf', F.bold); doc.addFont('Inter-Bold.ttf', 'Inter', 'bold');
+    doc.addFileToVFS('Inter-SemiBold.ttf', F.semibold); doc.addFont('Inter-SemiBold.ttf', 'InterSB', 'normal');
+    return true;
   }
-  function etiqueta(doc, t, x, y) { doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...TINTA); doc.text(t, x, y); }
-  function seccionLinea(doc, t, x, y, w) { etiqueta(doc, t, x, y); doc.setDrawColor(...OSCURO); doc.setLineWidth(0.6); doc.line(x - 2, y + 3, x + w, y + 3); }
-  /* Sector de anillo (para la rosca del agua) */
+  function mk(doc) {
+    const hay = fuentes(doc);
+    const fam = { n: hay ? ['Inter', 'normal'] : ['helvetica', 'normal'], b: hay ? ['Inter', 'bold'] : ['helvetica', 'bold'], s: hay ? ['InterSB', 'normal'] : ['helvetica', 'bold'] };
+    const t = (txt, x, y, { f = 'n', s = 9, c = C.tinta, al = 'left', cs = 0, mw = 0 } = {}) => {
+      doc.setFont(...fam[f]); doc.setFontSize(s); doc.setTextColor(...c);
+      const o = {}; if (cs) o.charSpace = cs; if (mw) o.maxWidth = mw;
+      const arr = Array.isArray(txt);
+      if (!arr && cs && al !== 'left') { const w = doc.getTextWidth(String(txt)) + cs * Math.max(0, String(txt).length - 1); doc.text(String(txt), al === 'right' ? x - w : x - w / 2, y, o); return; }
+      o.align = al; o.lineHeightFactor = 1.4;
+      doc.text(arr ? txt : String(txt), x, y, o);
+    };
+    const ancho = (txt, f = 'n', s = 9, cs = 0) => { doc.setFont(...fam[f]); doc.setFontSize(s); return doc.getTextWidth(String(txt)) + cs * Math.max(0, String(txt).length - 1); };
+    const lineas = (txt, w, f = 'n', s = 9) => { doc.setFont(...fam[f]); doc.setFontSize(s); return doc.splitTextToSize(String(txt), w); };
+    const caja = (x, y, w, h, fill, r = 2.6, borde = null) => { if (fill) doc.setFillColor(...fill); if (borde) { doc.setDrawColor(...borde); doc.setLineWidth(0.3); } doc.roundedRect(x, y, w, h, r, r, fill && borde ? 'FD' : fill ? 'F' : 'S'); };
+    const titulo = (txt, x, y) => t(txt.toUpperCase(), x, y, { f: 'b', s: 8.2, c: C.verde, cs: 0.35 });
+    return { t, ancho, lineas, caja, titulo, fam };
+  }
+  function banda(doc, y) {
+    const n = 60;
+    for (let k = 0; k < n; k++) {
+      const a = k / (n - 1);
+      const c = a < 0.6 ? C.verde.map((v, j) => Math.round(v + (C.verde2[j] - v) * (a / 0.6))) : C.verde2.map((v, j) => Math.round(v + (C.verde3[j] - v) * ((a - 0.6) / 0.4)));
+      doc.setFillColor(...c); doc.rect(M + AN * k / n, y, AN / n + 0.2, 1.6, 'F');
+    }
+  }
+  function logoEn(doc, logo, x, y, h, maxW) {
+    if (!logo) return 0;
+    try { const p = doc.getImageProperties(logo); const w = Math.min(maxW, h * p.width / p.height); doc.addImage(logo, x, y + (h - Math.min(h, w * p.height / p.width)) / 2, w, Math.min(h, w * p.height / p.width)); return w; } catch (_) { return 0; }
+  }
   function sector(doc, cx, cy, r0, r1, a0, a1, color) {
     if (a1 - a0 < 0.002) return;
-    const pts = [], n = Math.max(6, Math.ceil((a1 - a0) / 0.08));
+    const pts = [], n = Math.max(8, Math.ceil((a1 - a0) / 0.06));
     for (let k = 0; k <= n; k++) { const a = a0 + (a1 - a0) * k / n; pts.push([cx + r1 * Math.cos(a), cy + r1 * Math.sin(a)]); }
     for (let k = n; k >= 0; k--) { const a = a0 + (a1 - a0) * k / n; pts.push([cx + r0 * Math.cos(a), cy + r0 * Math.sin(a)]); }
     const rel = []; for (let k = 1; k < pts.length; k++) rel.push([pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]]);
     doc.setFillColor(...color); doc.lines(rel, pts[0][0], pts[0][1], [1, 1], 'F', true);
   }
-  function check(doc, x, y, s, color) { doc.setDrawColor(...color); doc.setLineWidth(0.7); doc.line(x, y, x + s * 0.35, y + s * 0.35); doc.line(x + s * 0.35, y + s * 0.35, x + s, y - s * 0.45); }
-  function pagina(doc, n) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...TINTA); doc.text(`Página ${n}`, 105, 290, { align: 'center' }); }
+  function rosca(doc, cx, cy, r, frac, color, pista) {
+    const g = r * 0.24;
+    sector(doc, cx, cy, r - g, r, 0, 2 * Math.PI, pista);
+    if (frac > 0) {
+      const a0 = -Math.PI / 2, a1 = a0 + 2 * Math.PI * Math.min(1, frac);
+      sector(doc, cx, cy, r - g, r, a0, a1, color);
+      doc.setFillColor(...color); // extremos redondeados
+      for (const a of [a0, a1]) doc.circle(cx + (r - g / 2) * Math.cos(a), cy + (r - g / 2) * Math.sin(a), g / 2, 'F');
+    }
+  }
+  function check(doc, x, y, s, color) { doc.setDrawColor(...color); doc.setLineWidth(0.55); doc.setLineCap('round'); doc.line(x, y, x + s * 0.38, y + s * 0.38); doc.line(x + s * 0.38, y + s * 0.38, x + s, y - s * 0.42); doc.setLineCap('butt'); }
+  function gota(doc, x, y, s, color) { doc.setFillColor(...color); doc.circle(x, y + s * 0.18, s * 0.42, 'F'); doc.triangle(x - s * 0.4, y + s * 0.05, x + s * 0.4, y + s * 0.05, x, y - s * 0.6, 'F'); }
+  function aviso(doc, x, y, s, color) { doc.setDrawColor(...color); doc.setLineWidth(0.45); doc.setLineJoin('round'); doc.triangle(x, y - s * 0.5, x - s * 0.55, y + s * 0.45, x + s * 0.55, y + s * 0.45, 'S'); doc.line(x, y - s * 0.12, x, y + s * 0.15); doc.circle(x, y + s * 0.3, 0.12, 'F'); }
 
   function informe(d) {
     const { jsPDF } = root.jspdf;
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    const W = 210, M = 14, D = W - M;
-    const p = d.plan;
-    doc.setLineHeightFactor(1.25);
+    const K = mk(doc), { t, ancho, lineas, caja, titulo } = K;
+    const mesTxt = `${MESES[d.mes]} ${d.anio}`;
+    const pieIzq = d.autor || 'FG Agro · Gestión agrícola';
+    const piePag = () => { t(pieIzq, M, 290, { s: 7.2, c: C.gris2 }); t(`Página ${doc.getNumberOfPages()}`, D, 290, { s: 7.2, c: C.gris2, al: 'right' }); };
 
     /* ---------- PÁGINA 1 ---------- */
-    logoEn(doc, d.logo, M, 9, 20, 80);
-    doc.setFillColor(...OSCURO); doc.rect(150, 13, 20, 7, 'F');
-    doc.setDrawColor(...OSCURO); doc.setLineWidth(0.3); doc.rect(170, 13, D - 170, 7, 'S');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(255); doc.text('AÑO', 160, 17.9, { align: 'center' });
-    doc.setTextColor(...TINTA); doc.text(String(d.anio), (170 + D) / 2, 17.9, { align: 'center' });
-
-    let y = 34;
-    doc.setFillColor(...OSCURO); doc.rect(M, y, 128, 10, 'F');
-    doc.setFillColor(...CLARO); doc.rect(M + 128, y, D - M - 128, 10, 'F');
-    doc.setDrawColor(...OSCURO); doc.rect(M, y, D - M, 10, 'S');
-    doc.setTextColor(255); doc.setFontSize(10.5); doc.text('RECOMENDACIÓN DE FERTIRRIGACIÓN', M + 64, y + 6.5, { align: 'center' });
-    doc.setTextColor(...TINTA); doc.setFontSize(11); doc.text(MESES[d.mes], (M + 128 + D) / 2, y + 6.6, { align: 'center' });
-
-    y = 52;
-    etiqueta(doc, 'CLIENTE:', M + 2, y); etiqueta(doc, 'CULTIVO Y SECTOR:', 116, y);
-    doc.setDrawColor(...LINEA); doc.setLineWidth(0.3);
-    doc.roundedRect(M, y + 3, 92, 9, 2, 2, 'S'); doc.roundedRect(114, y + 3, D - 114, 9, 2, 2, 'S');
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-    doc.text(doc.splitTextToSize(d.cliente || '', 86)[0] || '', M + 46, y + 8.8, { align: 'center' });
-    doc.text(doc.splitTextToSize(d.cultivo || '', D - 120)[0] || '', (114 + D) / 2, y + 8.8, { align: 'center' });
-
-    // Necesidades de riego
-    y = 75;
-    etiqueta(doc, 'NECESIDADES DE RIEGO:', M + 2, y);
-    doc.autoTable({
-      startY: y + 3, margin: { left: M + 10 }, tableWidth: 62, theme: 'grid',
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 1.1, halign: 'center', lineColor: [255, 255, 255], lineWidth: 0.4, textColor: TINTA },
-      columnStyles: { 0: { fillColor: OSCURO, textColor: 255, fontStyle: 'bold', cellWidth: 36 }, 1: { fillColor: CLARO } },
-      body: [['Días de riego:', String(d.riego.n || 0)], ['Tiempo de riego:', `${hm(d.riego.h)} h`]]
+    logoEn(doc, d.logo, M, 8, 15, 55);
+    t('RECOMENDACIÓN DE FERTIRRIGACIÓN', D, 12.5, { f: 's', s: 7.6, c: C.gris, al: 'right', cs: 0.45 });
+    t(mesTxt, D, 22, { f: 'b', s: 22, c: C.verde, al: 'right' });
+    banda(doc, 27);
+    let y = 31.5;
+    const anchos = [1.5, 1.4, 0.7, 0.7], gap = 2.6, tot = anchos.reduce((a, b) => a + b, 0), wu = (AN - gap * 3) / tot;
+    const info = [['Cliente', d.cliente || '–'], ['Cultivo y sector', d.cultivo || '–'], ['Árboles', num(d.arboles, 0)], ['Superficie', `${num(d.superficie, 2)} ha`]];
+    let x = M;
+    info.forEach(([l, v], k) => {
+      const w = anchos[k] * wu; caja(x, y, w, 12.5, C.claro, 2.6);
+      t(l.toUpperCase(), x + 3, y + 4.6, { f: 's', s: 6.6, c: C.gris, cs: 0.25 });
+      t(lineas(v, w - 6, 's', 10)[0] || '', x + 3, y + 9.6, { f: 's', s: 10 });
+      x += w + gap;
     });
+    y += 15.5;
     if (d.vulnerable) {
-      const ty = y + 22;
-      doc.setFillColor(255, 205, 40); doc.setDrawColor(120, 90, 0); doc.setLineWidth(0.3);
-      doc.triangle(M + 4, ty + 4, M + 8, ty - 3, M + 12, ty + 4, 'FD');
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(60, 40, 0); doc.text('!', M + 8, ty + 3, { align: 'center' });
-      doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(9); doc.setTextColor(...TINTA);
-      doc.text('Zona Vulnerable por Nitratos', M + 16, ty + 2.5);
-      doc.setLineWidth(0.25); doc.setDrawColor(...TINTA); doc.line(M + 16, ty + 3.3, M + 16 + doc.getTextWidth('Zona Vulnerable por Nitratos'), ty + 3.3);
+      const tx = 'Zona vulnerable a nitratos', w = ancho(tx, 's', 8.6) + 11;
+      caja(M, y, w, 6.2, C.ambar, 3.1);
+      aviso(doc, M + 4.2, y + 3.1, 3, C.ambarT);
+      t(tx, M + 7.6, y + 4.3, { f: 's', s: 8.6, c: C.ambarT });
+      y += 9;
     }
-    // árboles y superficie
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...TINTA);
-    doc.text(f(d.arboles, 0), 104, y + 12, { align: 'right' });
-    doc.text(`${f(d.superficie, 2)}`, 104, y + 22, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(...GRIS);
-    doc.text('árboles', 106, y + 12); doc.text('ha', 106, y + 22);
-
-    // Calendario
-    const cx0 = 128, cw = (D - cx0) / 7, ch = 5.6, cy0 = y - 4;
-    doc.setFillColor(...OSCURO); doc.rect(cx0, cy0, D - cx0, ch, 'F');
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(255);
-    'LMXJVSD'.split('').forEach((t, k) => doc.text(t, cx0 + cw * k + cw / 2, cy0 + 4, { align: 'center' }));
-    const cal = d.cal, riegoSet = new Set(cal.dias);
-    const ant = new Date(Number(d.anio), d.mes, 0).getDate();
-    doc.setFont('helvetica', 'normal');
-    for (let c = 0; c < 42; c++) {
-      const fila = Math.floor(c / 7), col = c % 7, x = cx0 + cw * col, yy = cy0 + ch * (fila + 1);
-      const dia = c - cal.primerDia + 1;
-      if (fila === 5 && dia > cal.total && c % 7 === 0) break;
-      const dentro = dia >= 1 && dia <= cal.total;
-      const num = dentro ? dia : dia < 1 ? ant + dia : dia - cal.total;
-      if (dentro && riegoSet.has(dia)) { doc.setFillColor(...AZUL_CL); doc.rect(x + 0.4, yy + 0.4, cw - 0.8, ch - 0.8, 'F'); }
-      doc.setFontSize(8.5);
-      doc.setTextColor(...(!dentro ? [185, 185, 185] : col >= 5 ? ROJO : TINTA));
-      doc.text(String(num).padStart(2, '0'), x + cw / 2, yy + 4, { align: 'center' });
+    // Riego del mes + calendario
+    y += 3;
+    const colL = AN * 0.465, colR0 = M + colL + 6, colR = D - colR0;
+    titulo('Riego del mes', M, y); titulo('Días de riego', colR0, y);
+    y += 3;
+    const kw = (colL - 2.6) / 2;
+    const kpi = (xx, yy, l, v, u, bg, cl, cv) => {
+      if (bg) caja(xx, yy, kw, 14.5, bg, 3); else caja(xx, yy, kw, 14.5, null, 3, C.borde);
+      t(l, xx + 3.2, yy + 5, { s: 7.8, c: cl });
+      t(v, xx + 3.2, yy + 11.6, { f: 'b', s: 15, c: cv });
+      if (u) t(u, xx + 3.2 + ancho(v, 'b', 15) + 1.2, yy + 11.6, { s: 8.5, c: cl });
+    };
+    kpi(M, y, 'Días de riego', String(d.riego.n || 0), '', null, C.gris, C.verde);
+    kpi(M + kw + 2.6, y, 'Tiempo por riego', hm(d.riego.h), 'h', null, C.gris, C.verde);
+    kpi(M, y + 17, 'Agua este mes', num(d.aguaMes, 0), 'm³', C.azulF, C.azulT2, C.azulT);
+    kpi(M + kw + 2.6, y + 17, 'Agua en la campaña', num(d.aguaAnio, 0), 'm³', C.azulF, C.azulT2, C.azulT);
+    // calendario con círculos
+    const cal = d.cal, filas = Math.ceil((cal.primerDia + cal.total) / 7), cw = (colR - 6) / 7, rh = 7.4;
+    const ch = 9 + filas * rh + 1;
+    caja(colR0, y, colR, ch, null, 3.4, C.borde);
+    'LMXJVSD'.split('').forEach((l, k) => t(l, colR0 + 3 + cw * k + cw / 2, y + 6, { f: 'b', s: 7.2, c: k >= 5 ? C.rojo : C.gris, al: 'center' }));
+    const set = new Set(cal.dias);
+    for (let dd = 1; dd <= cal.total; dd++) {
+      const c = cal.primerDia + dd - 1, fi = Math.floor(c / 7), co = c % 7;
+      const cx = colR0 + 3 + cw * co + cw / 2, cy = y + 9 + fi * rh + rh / 2;
+      if (set.has(dd)) { doc.setFillColor(...C.verde); doc.circle(cx, cy, 3.1, 'F'); t(String(dd), cx, cy + 1.15, { f: 'b', s: 8, c: [255, 255, 255], al: 'center' }); }
+      else t(String(dd), cx, cy + 1.15, { s: 8, c: co >= 5 ? C.rojo : C.tinta, al: 'center' });
     }
-    doc.setDrawColor(...OSCURO); doc.setLineWidth(0.3); doc.rect(cx0, cy0, D - cx0, ch * (Math.ceil((cal.primerDia + cal.total) / 7) + 1), 'S');
+    doc.setFillColor(...C.verde); doc.circle(colR0 + 1.6, y + ch + 3.4, 1.3, 'F');
+    t('día de riego', colR0 + 4.2, y + ch + 4.4, { s: 7.2, c: C.gris });
+    y = Math.max(y + 31.5, y + ch + 6) + 6;
 
     // Fertirrigación
-    y = Math.max(doc.lastAutoTable.finalY + 14, cy0 + ch * (Math.ceil((cal.primerDia + cal.total) / 7) + 1) + 9, 118);
-    etiqueta(doc, 'FERTIRRIGACIÓN:', M + 2, y);
-    const filas = d.lineas.map((l) => ['', l.nombre, `${f(l.porPie, 1)}`, `${f(l.porRiego, l.porRiego < 10 ? 2 : 1)}`, String(l.riegos ?? ''), l.periodo || '', l.tanque || '']);
-    while (filas.length < 6) filas.push(['', '', '', '', '', '', '']);
+    titulo('Fertirrigación', M, y); y += 2;
+    const filasT = d.lineas.map((l) => ['', l.nombre, l.porPie, l.porRiego, String(l.riegos ?? ''), l.periodo || '', l.tanque || '']);
+    if (!filasT.length) filasT.push(['', 'Sin productos este mes', '', '', '', '', '']);
+    const fn = K.fam;
     doc.autoTable({
-      startY: y + 3, margin: { left: M, right: M }, theme: 'grid',
-      head: [['', 'Producto', 'Dosis por planta\n(g o cc/planta)', 'Dosis por riego\n(kg o L)', 'Nº\nriegos', 'Periodo', 'Tanque']],
-      body: filas,
-      styles: { font: 'helvetica', fontSize: 8.8, cellPadding: 1.1, halign: 'center', valign: 'middle', lineColor: [255, 255, 255], lineWidth: 0.4, textColor: TINTA, fillColor: CLARO, minCellHeight: 5.2 },
-      headStyles: { fillColor: OSCURO, textColor: 255, fontStyle: 'bold', fontSize: 8 },
-      columnStyles: { 0: { cellWidth: 7, fillColor: [255, 255, 255] }, 1: { cellWidth: 52, fontStyle: 'bold' }, 2: { cellWidth: 26 }, 3: { cellWidth: 26 }, 4: { cellWidth: 14 }, 5: { cellWidth: 35 } },
-      didParseCell: (h) => { if (h.section === 'head' && h.column.index === 0) h.cell.styles.fillColor = [255, 255, 255]; },
-      didDrawCell: (h) => { if (h.section === 'body' && h.column.index === 0) { doc.setDrawColor(...TINTA); doc.setLineWidth(0.3); doc.rect(h.cell.x + 1.6, h.cell.y + h.cell.height / 2 - 1.8, 3.6, 3.6, 'S'); } }
+      startY: y, margin: { left: M, right: M }, theme: 'plain',
+      head: [['', 'PRODUCTO', 'POR PLANTA', 'POR RIEGO', 'RIEGOS', 'PERIODO', 'TANQUE']], body: filasT,
+      styles: { font: fn.n[0], fontStyle: fn.n[1], fontSize: 9.2, textColor: C.tinta, cellPadding: { top: 2.1, bottom: 2.1, left: 2, right: 2 }, valign: 'middle', fillColor: C.claro2, lineWidth: 0 },
+      headStyles: { font: fn.b[0], fontStyle: fn.b[1], fontSize: 7, textColor: C.gris, fillColor: [255, 255, 255], cellPadding: { top: 1, bottom: 1.6, left: 2, right: 2 } },
+      columnStyles: { 0: { cellWidth: 7 }, 1: { font: fn.b[0], fontStyle: fn.b[1] }, 2: { halign: 'right', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 24, font: fn.b[0], fontStyle: fn.b[1] }, 4: { halign: 'right', cellWidth: 16 }, 5: { cellWidth: 30 }, 6: { cellWidth: 26 } },
+      didParseCell: (h) => { if (h.section === 'head' && [2, 3, 4].includes(h.column.index)) h.cell.styles.halign = 'right'; if (h.section === 'body' && h.column.index === 6) h.cell.styles.textColor = h.cell.styles.fillColor; },
+      willDrawCell: (h) => { if (h.section === 'body') { h.cell.styles.lineWidth = 0; } },
+      didDrawCell: (h) => {
+        if (h.section !== 'body') return;
+        // separación blanca entre filas
+        doc.setFillColor(255, 255, 255); doc.rect(h.cell.x, h.cell.y + h.cell.height - 0.6, h.cell.width, 0.6, 'F');
+        if (h.column.index === 0 && d.lineas.length) { doc.setDrawColor(...C.gris); doc.setLineWidth(0.35); doc.roundedRect(h.cell.x + 2, h.cell.y + h.cell.height / 2 - 2.1, 3.6, 3.6, 0.7, 0.7, 'S'); }
+        if (h.column.index === 6 && h.cell.raw) {
+          const tq = h.cell.raw, e = /^E/i.test(tq), txt = e ? tq : 'Tanque ' + tq, w = ancho(txt, 'b', 7.6) + 5;
+          caja(h.cell.x + 2, h.cell.y + h.cell.height / 2 - 2.6, w, 4.8, e ? C.morado : C.t1, 2.4);
+          t(txt, h.cell.x + 4.5, h.cell.y + h.cell.height / 2 + 0.9, { f: 'b', s: 7.6, c: e ? C.moradoT : C.verde });
+        }
+      }
     });
-    y = doc.lastAutoTable.finalY + 3;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); doc.setTextColor(...TINTA);
-    doc.text(doc.splitTextToSize('Depósito 1 para fertilizantes sin calcio. Depósito 2 para fertilizantes sin sulfatos y fosfatos. Depósito E para aportes especiales. En caso de disponer de menos depósitos, vaciar y limpiar bien antes de una nueva mezcla.', D - M - 20), W / 2, y, { align: 'center' });
+    y = doc.lastAutoTable.finalY + 2.5;
+    const notaDep = lineas('Depósito 1: fertilizantes sin calcio · Depósito 2: sin sulfatos ni fosfatos · Depósito E: aportes especiales. Con menos depósitos, vaciar y limpiar bien antes de cada mezcla.', AN, 'n', 6.6);
+    t(notaDep, M, y + 1, { s: 6.6, c: C.gris });
+    y += 1 + notaDep.length * 3.3 + 6;
 
-    // Abono total del mes + UF del mes + agua
-    y += 12;
-    if (y > 205) { pagina(doc, doc.getNumberOfPages()); doc.addPage(); y = 20; }
-    etiqueta(doc, 'ABONO TOTAL/MES:', M + 2, y);
-    const tot = d.totales.map((t) => [t.nombre, `${f(t.total, 1)} ${t.u}`]);
-    while (tot.length < 5) tot.push(['', '']);
-    doc.autoTable({
-      startY: y + 3, margin: { left: M }, tableWidth: 84, theme: 'grid',
-      head: [['', 'Total kg o L/mes']], body: tot,
-      styles: { font: 'helvetica', fontSize: 8.8, cellPadding: 1.1, halign: 'center', lineColor: [255, 255, 255], lineWidth: 0.4, textColor: TINTA, fillColor: CLARO, minCellHeight: 5.2 },
-      headStyles: { fillColor: OSCURO, textColor: 255, fontStyle: 'bold', fontSize: 8 },
-      columnStyles: { 0: { cellWidth: 52, fontStyle: 'bold' } },
-      didParseCell: (h) => { if (h.section === 'head' && h.column.index === 0) h.cell.styles.fillColor = [255, 255, 255]; }
+    // Abono total + unidades fertilizantes
+    const nTot = Math.max(d.totales.length, 1), hTot = 7 + nTot * 6.1, hUF = 7 + 26;
+    if (y + Math.max(hTot, hUF) + 30 > 284) { piePag(); doc.addPage(); y = 16; }
+    const cL = AN * 0.45, cR0 = M + cL + 8, cR = D - cR0;
+    titulo('Abono total del mes', M, y); titulo('Unidades fertilizantes del mes', cR0, y);
+    let yy = y + 4;
+    (d.totales.length ? d.totales : [{ nombre: 'Sin productos', total: null, u: '' }]).forEach((p) => {
+      t(p.nombre, M, yy + 3.6, { s: 9 });
+      if (p.total != null) t(`${num(p.total, 1)} ${p.u}`, M + cL, yy + 3.6, { f: 'b', s: 9, al: 'right' });
+      doc.setDrawColor(227, 236, 230); doc.setLineWidth(0.25); doc.line(M, yy + 6, M + cL, yy + 6);
+      yy += 6.1;
     });
-    const yTabla = doc.lastAutoTable.finalY;
-    // UF del mes (barras)
-    const bx = 104, by = y + 4, bw = 34;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...TINTA); doc.text('Unidades fertilizantes del mes', bx, by);
-    const maxUf = Math.max(...d.ufMes, 1);
-    ['N', 'P2O5', 'K2O', 'CaO', 'MgO'].forEach((nu, j) => {
-      const yy = by + 4 + j * 5.6, v = +d.ufMes[j] || 0;
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(...TINTA); doc.text(nu, bx, yy + 3);
-      doc.setFillColor(238, 242, 239); doc.roundedRect(bx + 10, yy, bw, 3.8, 1, 1, 'F');
-      if (v > 0) { doc.setFillColor(...COL[j]); doc.roundedRect(bx + 10, yy, Math.max(2, bw * v / maxUf), 3.8, 1, 1, 'F'); }
-      doc.setTextColor(...GRIS); doc.text(v > 0 ? f(v, 1) : '–', bx + 12 + bw, yy + 3);
+    caja(cR0, y + 3, cR, 25, null, 3.4, C.borde);
+    const mx = Math.max(...d.ufMes.map((v) => +v || 0), 0.01), dw = cR / 5;
+    NUTR.forEach((n, j) => {
+      const v = +d.ufMes[j] || 0, cx = cR0 + dw * j + dw / 2, cy = y + 13.3;
+      rosca(doc, cx, cy, 7.2, v / mx, C.nutr[j], C.pista);
+      t(v ? num(v, 1) : '–', cx, cy + 1.3, { f: 'b', s: 8.2, al: 'center' });
+      t(n, cx, cy + 11.5, { f: 's', s: 7.6, c: C.gris, al: 'center' });
     });
-    doc.setFontSize(6.8); doc.setTextColor(...GRIS); doc.text('kg UF/ha', bx + 10, by + 4 + 5 * 5.6 + 1.5);
-    // Agua: rosca mes / año
-    const rx = 184, ry = y + 17, r1 = 12, r0 = 8.4;
-    const frac = d.aguaAnio ? Math.min(1, d.aguaMes / d.aguaAnio) : 0;
-    sector(doc, rx, ry, r0, r1, -Math.PI / 2, 1.5 * Math.PI, AZUL_CL);
-    sector(doc, rx, ry, r0, r1, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * frac, AZUL);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...TINTA);
-    doc.text('Mes', rx, ry - 3.6, { align: 'center' }); doc.setFont('helvetica', 'normal'); doc.text(`${f(d.aguaMes, 0)} m3`, rx, ry - 0.6, { align: 'center' });
-    doc.setFont('helvetica', 'bold'); doc.text('Año', rx, ry + 2.8, { align: 'center' }); doc.setFont('helvetica', 'normal'); doc.text(`${f(d.aguaAnio, 0)} m3`, rx, ry + 5.8, { align: 'center' });
-    doc.setFontSize(6.8); doc.setTextColor(...GRIS);
-    doc.setFillColor(...AZUL); doc.rect(rx - 15, ry + 16, 2, 2, 'F'); doc.text('Agua del mes', rx - 12, ry + 17.7);
-    doc.setFillColor(...AZUL_CL); doc.rect(rx - 15, ry + 20, 2, 2, 'F'); doc.text('Agua del año (finca)', rx - 12, ry + 21.7);
+    t('kg de unidades fertilizantes por hectárea', cR0, y + 31.5, { s: 6.8, c: C.gris2 });
+    y = Math.max(yy, y + 33) + 6;
 
     // Observaciones
-    y = Math.max(yTabla, ry + 23) + 9;
     const obs = [];
     if (d.obs) obs.push(d.obs);
-    if (d.acido) obs.push(`En caso de necesidad, la dosis de ácido nítrico/ácido fosfórico para limpieza de goteros es de ${f(d.acido.nitrico, 1)} L de nítrico o ${f(d.acido.fosforico, 1)} L de fosfórico. Inyectar durante 1 hora. Después abrir las mangueras. Se recomienda una vez al mes.`);
+    if (d.acido) obs.push(`En caso de necesidad, la dosis de ácido nítrico/ácido fosfórico para limpieza de goteros es de ${num(d.acido.nitrico, 1)} L de nítrico o ${num(d.acido.fosforico, 1)} L de fosfórico. Inyectar durante 1 hora. Después abrir las mangueras. Se recomienda una vez al mes.`);
     if (d.recintos) obs.push(`Esta unidad de producción incluye los siguientes recintos: ${d.recintos}`);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.6);
-    const lineasObs = obs.flatMap((t, k) => [...doc.splitTextToSize(t, D - M - 12), ...(k < obs.length - 1 ? [''] : [])]);
-    const hObs = Math.max(16, lineasObs.length * 4 + 8);
-    if (y + hObs + 8 > 282) { pagina(doc, doc.getNumberOfPages()); doc.addPage(); y = 20; }
-    seccionLinea(doc, 'OBSERVACIONES:', M + 2, y, 130);
-    doc.setFillColor(...CLARO); doc.rect(M, y + 6, D - M, hObs, 'F');
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.6); doc.setTextColor(...TINTA);
-    doc.text(lineasObs, W / 2, y + 12, { align: 'center' });
-    pagina(doc, doc.getNumberOfPages());
+    if (obs.length) {
+      const ls = obs.map((o) => lineas(o, AN - 12, 'n', 9));
+      const h = ls.reduce((s, l) => s + l.length * 4.45 + 1.6, 0) + 5;
+      if (y + 6 + h > 284) { piePag(); doc.addPage(); y = 16; }
+      titulo('Observaciones', M, y); y += 3;
+      doc.setFillColor(...C.claro2); doc.roundedRect(M, y, AN, h, 2.6, 2.6, 'F');
+      doc.setFillColor(...C.verde2); doc.rect(M, y, 1.4, h, 'F');
+      let oy = y + 6;
+      for (const l of ls) { t(l, M + 6, oy, { s: 9 }); oy += l.length * 4.45 + 1.6; }
+      y += h;
+    }
+    piePag();
 
-    /* ---------- PÁGINA 2 ---------- */
-    doc.addPage();
-    logoEn(doc, d.logo, W / 2, 8, 18, 80, true);
-    y = 34;
-    const bloqueTexto = (titulo, texto) => {
-      if (!texto || !String(texto).trim()) return;
-      seccionLinea(doc, titulo, M + 2, y, 130);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.2);
-      const ls = doc.splitTextToSize(String(texto).trim(), D - M - 12);
-      const h = Math.max(18, ls.length * 4.4 + 8);
-      doc.setFillColor(...CLARO); doc.rect(M, y + 6, D - M, h, 'F');
-      doc.setTextColor(...TINTA); doc.text(ls, M + 6, y + 12.5);
-      y += h + 15;
+    /* ---------- PÁGINA 2 (y 3 si no cabe) ---------- */
+    const cabecera = () => {
+      logoEn(doc, d.logo, M, 8, 11, 45);
+      t(`${(d.cliente || '').toUpperCase()} · ${(d.cultivo || '').toUpperCase()}`, D, 11.5, { f: 's', s: 6.8, c: C.gris, al: 'right', cs: 0.35 });
+      t(mesTxt, D, 18.5, { f: 'b', s: 15, c: C.verde, al: 'right' });
+      banda(doc, 22); return 28;
     };
-    bloqueTexto('INFORMACIÓN FITOSANITARIA:', d.textos.fito);
-    bloqueTexto('SITUACIÓN ACTUAL Y NOVEDADES:', d.textos.general);
-    vistazo(doc, d, M, Math.min(y, 196), D);
+    const LIM = 257; // por debajo va el pie del programa
+    doc.addPage(); y = cabecera();
+    const bloque = (h, fn) => { if (y + h > LIM) { piePag(); doc.addPage(); y = cabecera(); } fn(y); y += h; };
+    const texto = (tit, txt) => {
+      if (!txt || !String(txt).trim()) return;
+      const ls = lineas(String(txt).trim(), AN - 12, 'n', 9.3), h = ls.length * 4.6 + 6;
+      bloque(h + 9, (y0) => { titulo(tit, M, y0 + 4); caja(M, y0 + 6.5, AN, h, C.claro, 3); t(ls, M + 6, y0 + 11.8, { s: 9.3 }); });
+    };
+    texto('Información fitosanitaria', d.textos.fito);
+    texto('Situación actual y novedades', d.textos.general);
 
-    // Pie del programa
+    // Tu plan de un vistazo
+    const v = d.vistazo;
+    if (v) bloque(88, (y0) => {
+      titulo('Tu plan de un vistazo', M, y0 + 4);
+      const by = y0 + 6.5; caja(M, by, AN, 78, null, 3.4, C.borde);
+      t('Tu campaña mes a mes', M + 6, by + 7, { f: 's', s: 9 });
+      const ley = [['N', C.nutr[0]], ['P₂O₅', C.nutr[1]], ['K₂O', C.nutr[2]], ['Agua', C.agua]];
+      let lx = D - 6; for (const [n, c] of [...ley].reverse()) { const w = ancho(n, 'n', 7.6); lx -= w; t(n, lx, by + 7, { s: 7.6, c: C.gris }); lx -= 4.2; doc.setFillColor(...c); doc.roundedRect(lx, by + 4.5, 2.8, 2.8, 0.5, 0.5, 'F'); lx -= 5; }
+      const gx = M + 18, gw = D - 6 - gx, colW = gw / 12, base = by + 31, hUp = 20, hDn = 9;
+      const tots = v.uf12.map((m) => (+m[0] || 0) + (+m[1] || 0) + (+m[2] || 0));
+      const maxU = Math.max(...tots, 0.01), maxA = Math.max(...v.agua12, 0.01);
+      t('Abono ↑', M + 6, base - 1.5, { f: 's', s: 7, c: C.gris });
+      t('Agua ↓', M + 6, base + 4.5, { f: 's', s: 7, c: C.gris });
+      for (let i = 0; i < 12; i++) {
+        const act = i === d.mes, k = act ? 0 : 0.62, bw = colW * 0.42, bx = gx + colW * i + (colW - bw) / 2;
+        if (act) caja(gx + colW * i + 0.8, base - hUp - 3, colW - 1.6, hUp + hDn + 11, [238, 246, 240], 2.4);
+        let yb = base;
+        [0, 1, 2].forEach((j) => { const h = hUp * (+v.uf12[i][j] || 0) / maxU; if (h < 0.05) return; doc.setFillColor(...tinte(C.nutr[j], k)); doc.rect(bx, yb - h, bw, h, 'F'); yb -= h; });
+        const ha = hDn * (+v.agua12[i] || 0) / maxA;
+        if (ha > 0.05) { doc.setFillColor(...tinte(C.agua, act ? 0 : 0.62)); doc.rect(bx, base + 0.8, bw, ha, 'F'); }
+        t(MESES[i].slice(0, 3), gx + colW * i + colW / 2, base + hDn + 5.5, { f: act ? 'b' : 'n', s: 7.4, c: act ? C.verde : C.gris, al: 'center' });
+      }
+      doc.setDrawColor(201, 214, 205); doc.setLineWidth(0.3); doc.line(gx, base + 0.4, gx + gw, base + 0.4);
+      // aplicado hasta el mes
+      const sy = by + 53, cw2 = (AN - 12 - 10) / 2;
+      t(`Campaña aplicada hasta ${MESES[d.mes].toLowerCase()}`, M + 6, sy, { f: 's', s: 8.6 });
+      ['Nitrógeno', 'Fósforo', 'Potasio'].forEach((n, j) => {
+        const yy2 = sy + 4 + j * 6.2, fr = v.nTotal[j] ? Math.min(1, v.nAcum[j] / v.nTotal[j]) : 0, bx = M + 26, bw = cw2 - 34;
+        t(n, M + 6, yy2 + 2.8, { s: 8.4 });
+        caja(bx, yy2, bw, 3.6, C.pista, 1.8);
+        if (fr > 0) caja(bx, yy2, Math.max(3.6, bw * fr), 3.6, C.nutr[j], 1.8);
+        t(v.nTotal[j] ? `${Math.round(fr * 100)} %` : '–', M + 6 + cw2, yy2 + 2.9, { f: 's', s: 8.2, c: C.gris, al: 'right' });
+      });
+      // de dónde sale el nitrógeno
+      const ox = M + 6 + cw2 + 10, ow = cw2;
+      t('De dónde sale el nitrógeno que necesita', ox, sy, { f: 's', s: 8.6 });
+      const o = v.origenN || {};
+      const partes = [['Suelo', o.suelo, [140, 106, 70]], ['Agua de riego', o.agua, [91, 155, 213]], ['Estiércol', o.estiercol, [176, 138, 60]], ['Abono', o.abono, C.verde]].filter((p) => (+p[1] || 0) > 0.05);
+      const tt = partes.reduce((s, p) => s + p[1], 0);
+      if (tt > 0) {
+        let xx = ox; const yb = sy + 3.2;
+        doc.saveGraphicsState && doc.saveGraphicsState();
+        caja(ox, yb, ow, 6.4, [255, 255, 255], 2);
+        partes.forEach(([, val, c], k) => {
+          const w = ow * val / tt; doc.setFillColor(...c);
+          if (k === 0) doc.roundedRect(xx, yb, w + 2, 6.4, 2, 2, 'F'); else if (k === partes.length - 1) doc.roundedRect(xx - 2, yb, w + 2, 6.4, 2, 2, 'F');
+          doc.rect(xx + (k === 0 ? 2 : 0), yb, Math.max(0, w - (k === 0 ? 2 : 0) - (k === partes.length - 1 ? 2 : 0)), 6.4, 'F');
+          if (w > 8) t(`${Math.round(val / tt * 100)} %`, xx + w / 2, yb + 4.4, { f: 'b', s: 7.4, c: [255, 255, 255], al: 'center' });
+          xx += w;
+        });
+        let lx2 = ox; partes.forEach(([n, , c]) => { doc.setFillColor(...c); doc.roundedRect(lx2, yb + 9, 2.6, 2.6, 0.5, 0.5, 'F'); t(n, lx2 + 3.8, yb + 11.2, { s: 7.4, c: C.gris }); lx2 += ancho(n, 'n', 7.4) + 8; });
+        t(lineas('El abono solo pone lo que no aportan ya el suelo, el agua y la materia orgánica.', ow, 'n', 7)[0], ox, yb + 16.5, { s: 7, c: C.gris2 });
+      }
+    });
+
+    // Lo que aporta tu agua de riego
+    if (d.aguaAporta && d.aguaAporta.uf.some((x) => x > 0.05)) bloque(33, (y0) => {
+      titulo('Lo que aporta tu agua de riego', M, y0 + 4);
+      const by = y0 + 6.5, h = 25; caja(M, by, AN, h, C.aguaF, 3.4);
+      gota(doc, M + 6, by + 6.2, 4.2, C.agua);
+      const tw = AN * 0.53 - 12;
+      t('Tu agua también abona', M + 11, by + 6.2, { f: 'b', s: 9, c: C.aguaT });
+      const txt = `Con los ${num(d.aguaAporta.dosis, 0)} m³/ha de riego de la campaña y la analítica de tu agua, estos nutrientes ya llegan a la planta y están descontados de tu abonado: no pagas por lo que el agua ya pone.`;
+      t(lineas(txt, tw, 'n', 8.2), M + 11, by + 10.6, { s: 8.2, c: [47, 74, 82] });
+      const sel = [[0, 'Nitrógeno (N)'], [2, 'Potasio (K₂O)'], [3, 'Calcio (CaO)'], [4, 'Magnesio (MgO)']];
+      const tx0 = M + AN * 0.55, tW = (D - 4 - tx0 - 3 * 2) / 4;
+      sel.forEach(([j, n], k) => {
+        const xx = tx0 + k * (tW + 2), val = d.aguaAporta.uf[j];
+        caja(xx, by + 3.5, tW, h - 7, [255, 255, 255], 2.4);
+        t(val >= 10 ? num(val, 0) : num(val, 1), xx + tW / 2, by + 10.2, { f: 'b', s: 12, c: C.aguaT, al: 'center' });
+        t('kg/ha', xx + tW / 2, by + 13.4, { s: 6.4, c: [93, 122, 128], al: 'center' });
+        t(lineas(n, tW - 2, 'n', 6.6), xx + tW / 2, by + 16.6, { s: 6.6, c: [47, 74, 82], al: 'center' });
+      });
+    });
+
+    // Marcas de lo comprobado
+    if (d.marcas && d.marcas.length) {
+      const chips = d.marcas.map((m) => ({ m, w: ancho(m, 'n', 8.2) + 11 }));
+      let filas = 1, cx = M; for (const c of chips) { if (cx + c.w > D) { filas++; cx = M; } cx += c.w + 2.5; }
+      bloque(filas * 8.2 + 3, (y0) => {
+        let xx = M, yy2 = y0 + 2;
+        for (const c of chips) {
+          if (xx + c.w > D) { xx = M; yy2 += 8.2; }
+          caja(xx, yy2, c.w, 6.6, [227, 241, 232], 3.3); check(doc, xx + 3, yy2 + 3.4, 2.6, C.verde); t(c.m, xx + 7.4, yy2 + 4.5, { s: 8.2 });
+          xx += c.w + 2.5;
+        }
+      });
+    }
+    // Recomendaciones (analíticas)
+    for (const r of d.recomendaciones || []) {
+      const ls = lineas(r.texto, AN - 16, 'n', 8.6), h = ls.length * 4.2 + 10;
+      bloque(h + 3, (y0) => {
+        caja(M, y0 + 1, AN, h, C.ambar, 3);
+        aviso(doc, M + 5.6, y0 + 6.2, 3.6, C.ambarT);
+        t(r.titulo, M + 10.5, y0 + 6.6, { f: 'b', s: 9, c: C.ambarT });
+        t(ls, M + 10.5, y0 + 11, { s: 8.6, c: [92, 67, 0] });
+      });
+    }
+    // Pie del programa (última página)
     const pie = d.pie || {};
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...TINTA);
-    if (pie.texto) doc.text(doc.splitTextToSize(pie.texto, D - M - 10), W / 2, 266, { align: 'center' });
-    doc.setFontSize(9);
-    const tel = pie.telefono ? `Telf: ${pie.telefono}` : '', mail = pie.email ? `E-Mail: ${pie.email}` : '';
-    if (tel) doc.text(tel, 60, 281, { align: 'center' });
-    if (mail) doc.text(mail, 150, 281, { align: 'center' });
-    pagina(doc, doc.getNumberOfPages());
+    if (pie.texto) t(lineas(pie.texto, AN - 6, 'n', 6.8), W / 2, 262, { s: 6.8, c: C.gris, al: 'center' });
+    const tel = pie.telefono ? `Telf: ${pie.telefono}` : '', mail = pie.email ? `E-mail: ${pie.email}` : '';
+    if (tel) t(tel, W / 2 - 30, 279, { s: 8.6, al: 'center' });
+    if (mail) t(mail, W / 2 + 30, 279, { s: 8.6, al: 'center' });
+    piePag();
     return doc.output('blob');
   }
 
-  /* Bloque visual de la página 2: el plan de un vistazo (pocos números) */
-  function vistazo(doc, d, M, y0, D) {
-    const v = d.vistazo; if (!v) return;
-    const W = D - M;
-    seccionLinea(doc, 'TU PLAN DE UN VISTAZO:', M + 2, y0, 130);
-    let y = y0 + 9;
-    // 1) Campaña mes a mes: abono arriba (N, P, K apilados) y agua abajo
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...TINTA);
-    doc.text('Tu campaña mes a mes', M, y + 2);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(...GRIS);
-    const ley = [['N', COL[0]], ['P2O5', COL[1]], ['K2O', COL[2]], ['Agua', AZUL]];
-    let lx = D - 70; for (const [t, c] of ley) { doc.setFillColor(...c); doc.rect(lx, y - 0.2, 2.4, 2.4, 'F'); doc.text(t, lx + 3.4, y + 1.9); lx += 17; }
-    const gx = M + 4, gw = W - 8, colW = gw / 12, base = y + 30, hUp = 24, hDn = 13;
-    const tot = v.uf12.map((m) => (+m[0] || 0) + (+m[1] || 0) + (+m[2] || 0));
-    const maxUp = Math.max(...tot, 0.001), maxDn = Math.max(...v.agua12, 0.001);
-    for (let i = 0; i < 12; i++) {
-      const actual = i === d.mes, k = actual ? 0 : 0.55, x = gx + colW * i + colW * 0.2, bw = colW * 0.6;
-      if (actual) { doc.setFillColor(243, 248, 240); doc.roundedRect(gx + colW * i + 0.6, base - hUp - 3, colW - 1.2, hUp + hDn + 10, 2, 2, 'F'); }
-      let yy = base;
-      for (let j = 0; j < 3; j++) {
-        const h = hUp * (+v.uf12[i][j] || 0) / maxUp; if (h <= 0.05) continue;
-        doc.setFillColor(...tinte(COL[j], k)); doc.rect(x, yy - h, bw, h, 'F'); yy -= h;
-      }
-      const ha = hDn * (+v.agua12[i] || 0) / maxDn;
-      if (ha > 0.05) { doc.setFillColor(...tinte(AZUL, actual ? 0 : 0.5)); doc.rect(x, base + 1, bw, ha, 'F'); }
-      doc.setFont('helvetica', actual ? 'bold' : 'normal'); doc.setFontSize(7.5); doc.setTextColor(...(actual ? OSCURO : GRIS));
-      doc.text(MESES[i].slice(0, 3), gx + colW * i + colW / 2, base + hDn + 5, { align: 'center' });
-    }
-    doc.setDrawColor(...LINEA); doc.setLineWidth(0.3); doc.line(gx, base + 0.5, gx + gw, base + 0.5);
-    y = base + hDn + 12;
 
-    // 2) Cuánto llevamos de campaña  ·  3) De dónde sale el N
-    const cW = (W - 8) / 2;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...TINTA);
-    doc.text(`Campaña aplicada hasta ${MESES[d.mes].toLowerCase()}`, M, y);
-    ['Nitrógeno', 'Fósforo', 'Potasio'].forEach((t, j) => {
-      const yy = y + 4 + j * 7, frac = v.nTotal[j] ? Math.min(1, v.nAcum[j] / v.nTotal[j]) : 0;
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.8); doc.setTextColor(...TINTA); doc.text(t, M, yy + 3.2);
-      doc.setFillColor(238, 242, 239); doc.roundedRect(M + 18, yy, cW - 30, 4.4, 2.2, 2.2, 'F');
-      if (frac > 0) { doc.setFillColor(...COL[j]); doc.roundedRect(M + 18, yy, Math.max(4.4, (cW - 30) * frac), 4.4, 2.2, 2.2, 'F'); }
-      doc.setTextColor(...GRIS); doc.text(v.nTotal[j] ? `${Math.round(frac * 100)} %` : '–', M + cW - 10, yy + 3.2);
+  /* ================= REGISTROS (1.6): fertilización, riego, plan de abonado anual, productos para pedidos ================= */
+  function docReg(horizontal) {
+    const { jsPDF } = root.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: horizontal ? 'landscape' : 'portrait' });
+    const K = mk(doc);
+    const PW = horizontal ? 297 : 210, PH = horizontal ? 210 : 297, R = PW - M;
+    return { doc, K, PW, PH, R, AW: R - M };
+  }
+  function cabReg(o, titulo, sub, logo) {
+    const { doc, K, R } = o;
+    logoEn(doc, logo, M, 8, 13, 50);
+    K.t(titulo.toUpperCase(), R, 12, { f: 's', s: 7.6, c: C.gris, al: 'right', cs: 0.45 });
+    K.t(sub, R, 20, { f: 'b', s: 15, c: C.verde, al: 'right' });
+    const n = 60, a0 = C.verde, a1 = C.verde3;
+    for (let k = 0; k < n; k++) { const f = k / (n - 1); doc.setFillColor(...a0.map((v, j) => Math.round(v + (a1[j] - v) * f))); doc.rect(M + o.AW * k / n, 24, o.AW / n + 0.2, 1.4, 'F'); }
+    return 30;
+  }
+  function datosReg(o, pares, y, cols = 4) {
+    const { K } = o, gap = 2.4, w = (o.AW - gap * (cols - 1)) / cols;
+    let x = M, fila = 0;
+    pares.forEach(([l, v], k) => {
+      const c = k % cols; if (c === 0 && k) { fila++; }
+      x = M + c * (w + gap); const yy = y + fila * 13;
+      K.caja(x, yy, w, 11.2, C.claro, 2.2);
+      K.t(String(l).toUpperCase(), x + 2.6, yy + 4, { f: 's', s: 6.2, c: C.gris, cs: 0.2 });
+      K.t(K.lineas(v == null || v === '' ? '–' : String(v), w - 5, 's', 8.6)[0], x + 2.6, yy + 8.6, { f: 's', s: 8.6 });
     });
-    const ox = M + cW + 8, ow = cW;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...TINTA);
-    doc.text('De dónde sale el nitrógeno que necesita', ox, y);
-    const o = v.origenN || {};
-    const partes = [['Suelo', o.suelo, [140, 106, 70]], ['Agua', o.agua, AZUL], ['Estiércol', o.estiercol, [170, 140, 60]], ['Abono', o.abono, COL[0]]].filter((x) => (+x[1] || 0) > 0.05);
-    const total = partes.reduce((t, x) => t + x[1], 0);
-    if (total > 0) {
-      let xx = ox; const by = y + 4, bh = 7;
-      partes.forEach(([t, val, c], k) => {
-        const w = ow * val / total;
-        doc.setFillColor(...c);
-        if (k === 0 || k === partes.length - 1) doc.roundedRect(xx, by, w, bh, 1.5, 1.5, 'F');
-        doc.rect(xx + (k === 0 ? 2 : 0), by, w - (k === 0 ? 2 : 0) - (k === partes.length - 1 ? 2 : 0), bh, 'F');
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(255);
-        if (w > 9) doc.text(`${Math.round(val / total * 100)} %`, xx + w / 2, by + 4.7, { align: 'center' });
-        doc.setFont('helvetica', 'normal'); doc.setTextColor(...TINTA);
-        xx += w;
-      });
-      // leyenda con todas las partes (las pequeñas no caben dentro de la barra)
-      let lx2 = ox; doc.setFontSize(7);
-      partes.forEach(([t, , c]) => { doc.setFillColor(...c); doc.rect(lx2, y + 17.2, 2.4, 2.4, 'F'); doc.setTextColor(...TINTA); doc.text(t, lx2 + 3.4, y + 19.2); lx2 += doc.getTextWidth(t) + 9; });
-      doc.setTextColor(...GRIS);
-      doc.text(doc.splitTextToSize('El abono solo pone lo que no aportan ya el suelo, el agua y la materia orgánica.', ow), ox, y + 24);
-    }
-    y += 33;
+    return y + (fila + 1) * 13 + 2;
+  }
+  function tablaReg(o, { y, head, body, cols = {}, sub = [], pie = null, fs = 8.2 }) {
+    const { doc, K } = o, fn = K.fam;
+    doc.autoTable({
+      startY: y, margin: { left: M, right: M, top: 30, bottom: 16 }, theme: 'plain', head: [head], body, foot: pie ? [pie] : undefined, showFoot: 'lastPage',
+      styles: { font: fn.n[0], fontStyle: fn.n[1], fontSize: fs, textColor: C.tinta, cellPadding: { top: 1.6, bottom: 1.6, left: 1.8, right: 1.8 }, valign: 'middle', lineWidth: 0 },
+      headStyles: { font: fn.b[0], fontStyle: fn.b[1], fontSize: 6.8, textColor: C.gris, fillColor: [255, 255, 255] },
+      footStyles: { font: fn.b[0], fontStyle: fn.b[1], fontSize: fs, textColor: C.verde, fillColor: C.claro },
+      columnStyles: cols,
+      didParseCell: (h) => {
+        if (h.section === 'head' && cols[h.column.index] && cols[h.column.index].halign) h.cell.styles.halign = cols[h.column.index].halign;
+        if (h.section === 'body') { h.cell.styles.fillColor = h.row.index % 2 ? [255, 255, 255] : C.claro2; if (sub.includes(h.row.index)) { h.cell.styles.fillColor = C.claro; h.cell.styles.font = fn.s[0]; h.cell.styles.fontStyle = fn.s[1]; h.cell.styles.textColor = C.verde; } }
+      },
+      didDrawPage: () => { doc.setDrawColor(...C.borde); }
+    });
+    return doc.lastAutoTable.finalY;
+  }
+  function pieReg(o, texto) {
+    const { doc, K, PW, PH } = o, n = doc.getNumberOfPages();
+    for (let i = 1; i <= n; i++) { doc.setPage(i); K.t(texto, M, PH - 7, { s: 6.8, c: C.gris2 }); K.t(`Página ${i} de ${n}`, PW - M, PH - 7, { s: 6.8, c: C.gris2, al: 'right' }); }
+  }
+  function firmas(o, y, autor) {
+    const { doc, K, PH } = o;
+    if (y + 26 > PH - 16) { doc.addPage(); y = 20; }
+    const w = (o.AW - 20) / 2;
+    [[`El asesor${autor ? ': ' + autor : ''}`, M], ['El titular de la explotación', M + w + 20]].forEach(([t, x]) => { doc.setDrawColor(...C.borde); doc.setLineWidth(0.3); doc.line(x, y + 18, x + w, y + 18); K.t(t, x, y + 22.5, { s: 7.6, c: C.gris }); });
+    return y + 26;
+  }
+  const n1 = (v) => num(v, 1), n0_ = (v) => num(v, 0);
 
-    // 4) Comprobado: chips con una marca
-    const chips = [];
-    chips.push(['Riego ajustado al clima de la zona', true]);
-    if (v.analSuelo) chips.push([`Analítica de suelo ${mesAnio(v.analSuelo)}`, true]);
-    if (v.analAgua) chips.push([`Analítica de agua ${mesAnio(v.analAgua)}`, true]);
-    if (d.vulnerable && v.dentroLimite) chips.push(['Zona vulnerable: dentro del límite de nitrógeno', true]);
-    let cx = M; doc.setFontSize(7.6);
-    for (const [t, ok] of chips) {
-      doc.setFont('helvetica', 'normal');
-      const w = doc.getTextWidth(t) + 11;
-      if (cx + w > D) { cx = M; y += 8; }
-      doc.setFillColor(...(ok ? CLARO : [253, 236, 200])); doc.roundedRect(cx, y, w, 6, 3, 3, 'F');
-      if (ok) check(doc, cx + 2.4, y + 3, 2.6, OSCURO); else { doc.setFont('helvetica', 'bold'); doc.setTextColor(150, 90, 0); doc.text('!', cx + 3.4, y + 4.2); }
-      doc.setFont('helvetica', 'normal'); doc.setTextColor(...TINTA); doc.text(t, cx + 7.5, y + 4.2);
-      cx += w + 3;
-    }
+  /* d = { titulo, intervalo, logo, autor, planes: [{ cab:[[l,v]], meses:[{ etiqueta, lineas:[{fecha, producto, tipo, riqueza, dosis, total}], uf[3], acum[3], obj[3]|null }], tot[3], permitido, campanas }] } */
+  function registroFert(d) {
+    const o = docReg(true), { doc, K } = o;
+    d.planes.forEach((p, k) => {
+      if (k) doc.addPage();
+      let y = cabReg(o, 'Registro de fertilización · RD 1051/2022', d.intervalo, d.logo);
+      y = datosReg(o, p.cab, y, 5);
+      const body = [], sub = [];
+      for (const m of p.meses) {
+        for (const l of m.lineas) body.push([l.fecha, l.producto, l.tipo, l.riqueza, l.dosis, l.total, n1(l.uf[0]), n1(l.uf[1]), n1(l.uf[2]), 'Fertirrigación']);
+        sub.push(body.length);
+        body.push([`Total ${m.etiqueta}`, m.obj ? `Recomendado (plan): N ${n1(m.obj[0])} · P₂O₅ ${n1(m.obj[1])} · K₂O ${n1(m.obj[2])}` : '', '', '', '', `Acumulado: ${n1(m.acum[0])} · ${n1(m.acum[1])} · ${n1(m.acum[2])}`, n1(m.uf[0]), n1(m.uf[1]), n1(m.uf[2]), '']);
+      }
+      if (!body.length) body.push(['', 'Sin aportes de fertilizantes en el intervalo', '', '', '', '', '', '', '', '']);
+      y = tablaReg(o, {
+        y, body, sub, fs: 7.8,
+        head: ['FECHA', 'PRODUCTO', 'TIPO', 'RIQUEZA N-P₂O₅-K₂O (%)', 'DOSIS', 'CANTIDAD FINCA', 'N kg/ha', 'P₂O₅ kg/ha', 'K₂O kg/ha', 'MÉTODO'],
+        cols: { 0: { cellWidth: 26 }, 1: { cellWidth: 58 }, 2: { cellWidth: 30 }, 3: { cellWidth: 30, halign: 'center' }, 4: { cellWidth: 24, halign: 'right' }, 5: { cellWidth: 28, halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' }, 9: { cellWidth: 24 } },
+        pie: ['Total del intervalo', '', '', '', '', '', n1(p.tot[0]), n1(p.tot[1]), n1(p.tot[2]), '']
+      });
+      y += 5;
+      const nota = `Unidades fertilizantes en kg/ha. Aporte de N mineral permitido por el balance de la campaña ${p.campanas}: ${n1(p.permitido)} kg N/ha. Registro elaborado a partir del plan de fertirrigación; las fechas corresponden a los días de riego programados para cada producto.`;
+      K.t(K.lineas(nota, o.AW, 'n', 7.4), M, y + 2, { s: 7.4, c: C.gris });
+      firmas(o, y + 8, d.autor);
+    });
+    pieReg(o, `${d.titulo} · ${d.intervalo}`);
+    return doc.output('blob');
   }
 
-  root.PDF = { balance, informe };
+  /* d = { titulo, intervalo, logo, autor, planes: [{ cab, filas:[{mes, dias, n, h, m3ha, m3finca, acum, nec}], tot:{n, m3ha, m3finca, nec}, sistema, agua }] } */
+  function registroRiego(d) {
+    const o = docReg(false), { doc, K } = o;
+    d.planes.forEach((p, k) => {
+      if (k) doc.addPage();
+      let y = cabReg(o, 'Registro de riego', d.intervalo, d.logo);
+      y = datosReg(o, p.cab, y, 3);
+      const body = p.filas.map((f) => [f.mes, f.dias, String(f.n || 0), f.h, n0_(f.m3ha), n0_(f.m3finca), n0_(f.acum), n0_(f.nec), f.nec ? `${n0_(f.m3ha / f.nec * 100)} %` : '–']);
+      y = tablaReg(o, {
+        y, body, fs: 8,
+        head: ['MES', 'DÍAS DE RIEGO', 'Nº RIEGOS', 'HORAS/RIEGO', 'm³/ha', 'm³ FINCA', 'ACUM. m³/ha', 'NECESIDAD m³/ha', '% NEC.'],
+        cols: { 0: { cellWidth: 26 }, 1: { cellWidth: 46 }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' }, 8: { halign: 'right' } },
+        pie: ['Total', '', String(p.tot.n), '', n0_(p.tot.m3ha), n0_(p.tot.m3finca), '', n0_(p.tot.nec), p.tot.nec ? `${n0_(p.tot.m3ha / p.tot.nec * 100)} %` : '']
+      });
+      K.t(K.lineas(`Sistema de riego: ${p.sistema}. ${p.agua}. Necesidad calculada con la ETo de la zona y el Kc del cultivo, sin lluvia efectiva.`, o.AW, 'n', 7.4), M, y + 6, { s: 7.4, c: C.gris });
+      firmas(o, y + 12, d.autor);
+    });
+    pieReg(o, `${d.titulo} · ${d.intervalo}`);
+    return doc.output('blob');
+  }
+
+  /* d = { campana, logo, autor, planes: [{ cab, suelo:[[l,v]], agua:[[l,v]], balance:[[concepto, valor]], necesidades:{filas:[[nut, teor, est, agua, fac, obj]]}, reparto:[{mes, obj[3], plan[3]}], productos:[[mes, producto, tipo, momento, dosis, n, p, k]], aplicacion, medidas, riego }] } */
+  function planAnual(d) {
+    const o = docReg(false), { doc, K } = o;
+    const sec = (t, y) => { if (y > o.PH - 40) { doc.addPage(); y = 20; } K.titulo(t, M, y + 4); return y + 6.5; };
+    d.planes.forEach((p, k) => {
+      if (k) doc.addPage();
+      let y = cabReg(o, 'Plan de abonado · RD 1051/2022', `Campaña ${d.campana}`, d.logo);
+      y = datosReg(o, p.cab, y, 4);
+      y = sec('1 · Analíticas', y);
+      y = datosReg(o, [...p.suelo, ...p.agua], y, 4);
+      y = sec('2 · Balance de nitrógeno (estimado)', y);
+      y = tablaReg(o, { y, head: ['CONCEPTO', 'kg N/ha'], body: p.balance, cols: { 1: { halign: 'right', cellWidth: 30 } } }) + 4;
+      y = sec('3 · Necesidades anuales (kg UF/ha)', y);
+      y = tablaReg(o, { y, head: ['NUTRIENTE', 'NECESIDAD', '− ESTIÉRCOL', '− AGUA DE RIEGO', '× FACTOR', 'OBJETIVO'], body: p.necesidades, cols: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } } }) + 4;
+      y = sec('4 · Reparto mensual: objetivo y plan (kg UF/ha)', y);
+      y = tablaReg(o, { y, head: ['MES', 'N OBJ.', 'N PLAN', 'P₂O₅ OBJ.', 'P₂O₅ PLAN', 'K₂O OBJ.', 'K₂O PLAN'], body: p.reparto.map((r) => [r.mes, n1(r.obj[0]), n1(r.plan[0]), n1(r.obj[1]), n1(r.plan[1]), n1(r.obj[2]), n1(r.plan[2])]), cols: Object.fromEntries([1, 2, 3, 4, 5, 6].map((c) => [c, { halign: 'right' }])), fs: 7.8 }) + 4;
+      y = sec('5 · Fertilizantes previstos', y);
+      y = tablaReg(o, { y, head: ['MES', 'PRODUCTO', 'TIPO', 'MOMENTO', 'DOSIS MES', 'N', 'P₂O₅', 'K₂O'], body: p.productos.length ? p.productos : [['', 'Sin productos', '', '', '', '', '', '']], cols: { 0: { cellWidth: 20 }, 1: { cellWidth: 50 }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' } }, fs: 7.6 }) + 4;
+      y = sec('6 · Forma de aplicación, maquinaria y medidas', y);
+      const txt = [`Aplicación: ${p.aplicacion}`, `Riego: ${p.riego}`, `Medidas para reducir emisiones de amoniaco y gases de efecto invernadero: ${p.medidas}`];
+      for (const t of txt) { const ls = K.lineas(t, o.AW, 'n', 8.4); if (y + ls.length * 4.2 > o.PH - 20) { doc.addPage(); y = 20; } K.t(ls, M, y + 3, { s: 8.4 }); y += ls.length * 4.2 + 2.5; }
+      firmas(o, y + 2, d.autor);
+    });
+    pieReg(o, `Plan de abonado · campaña ${d.campana}`);
+    return doc.output('blob');
+  }
+
+  /* d = { intervalo, logo, meses:[etiq], porProducto:[{nombre, u, total, porMes[]}], porCliente:[{cliente, planes, productos:[{nombre, u, total, porMes[]}]}] } */
+  function pedidos(d) {
+    const o = docReg(true), { doc, K } = o;
+    const conMeses = d.meses.length > 1 && d.meses.length <= 6;
+    let y = cabReg(o, 'Productos para pedidos', d.intervalo, d.logo);
+    const fila = (p) => [p.nombre, ...(conMeses ? p.porMes.map((v) => (v ? n1(v) : '–')) : []), `${n1(p.total)} ${p.u}`];
+    const cols = { 0: { cellWidth: 70 }, ...Object.fromEntries((conMeses ? d.meses : []).map((_, k) => [k + 1, { halign: 'right' }])), [(conMeses ? d.meses.length : 0) + 1]: { halign: 'right', fontStyle: 'bold' } };
+    const head = ['PRODUCTO', ...(conMeses ? d.meses.map((m) => m.toUpperCase()) : []), 'TOTAL'];
+    K.titulo('Total de todos los clientes', M, y + 2); y += 4;
+    y = tablaReg(o, { y, head, body: d.porProducto.map(fila), cols }) + 8;
+    for (const c of d.porCliente) {
+      if (y > o.PH - 40) { doc.addPage(); y = 20; }
+      K.titulo(`${c.cliente} · ${c.planes}`, M, y + 2); y += 4;
+      y = tablaReg(o, { y, head, body: c.productos.map(fila), cols }) + 7;
+    }
+    pieReg(o, `Productos para pedidos · ${d.intervalo}`);
+    return doc.output('blob');
+  }
+
+  root.PDF = { balance, informe, registroFert, registroRiego, planAnual, pedidos };
 })(typeof window !== 'undefined' ? window : globalThis);
