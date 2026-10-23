@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1027,6 +1027,7 @@ function tabFert(el, p, camp) {
       <button class="btn peq" id="fAdd">+ Añadir producto</button>
       ${ant ? `<button class="btn peq" id="fAnt">Copiar ${CALC.MESES[i].toLowerCase()} de ${esc(ant)}</button>` : ''}
       ${i > 0 && conLineas(i - 1) ? `<button class="btn peq" id="fPrev">Copiar de ${CALC.MESES[i - 1].toLowerCase()}</button>` : ''}
+      <button class="btn peq" id="fOtro" title="Copiar productos y dosis de ${CALC.MESES[i].toLowerCase()} de otro plan">Copiar de otro plan</button>
       <button class="btn peq p" id="fAjus" ${obj && m.lineas.length ? '' : 'disabled'}>Ajustar al objetivo</button>
       <button class="btn peq" id="fTq" ${m.lineas.some((l) => !l.tanqueAuto) ? '' : 'disabled'}>Tanques automáticos</button>
       <span class="spacer"></span><button class="btn peq rojo" id="fVac" ${m.lineas.length ? '' : 'disabled'}>Vaciar mes</button></div>
@@ -1081,6 +1082,7 @@ function tabFert(el, p, camp) {
   if ($('#fAnt', el)) $('#fAnt', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(p.campanas[ant].fert[i].lineas)); }); toast(`Copiado ${CALC.MESES[i].toLowerCase()} de ${ant}`); };
   if ($('#fPrev', el)) $('#fPrev', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rg.n || l.riegos) : l.riegos }))); }); };
   $('#fTq', el).onclick = () => guardarLineas((ls) => ls.forEach((l) => { l.tanque = null; }));
+  $('#fOtro', el).onclick = () => copiarDeOtroPlan(p, i, rg.n || 0, fm.lineas.length, guardarLineas);
   $('#fVac', el).onclick = () => { if (confirm(`¿Quitar todos los productos de ${CALC.MESES[i].toLowerCase()}?`)) guardarLineas((ls) => ls.splice(0, ls.length)); };
   $('#fAjus', el).onclick = () => {
     const r = FERT.ajustar(p, camp, i, ix, obj);
@@ -1093,6 +1095,53 @@ function tabFert(el, p, camp) {
     { pie: '<button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="ajOk">Aplicar</button>' });
     $$('[data-cerrar]', md).forEach((b) => { b.onclick = cerrarModal; });
     $('#ajOk', md).onclick = () => { cerrarModal(); guardarLineas((ls) => { for (const [k, d] of Object.entries(r.dosis)) ls[+k].dosis = d; }); toast('Dosis ajustadas'); };
+  };
+}
+
+/* ----- Copiar los productos del mismo mes de otro plan (de cualquier cliente) ----- */
+function copiarDeOtroPlan(p, i, nRiegos, nActual, guardarLineas) {
+  const ix = ixProd(), mesTxt = CALC.MESES[i].toLowerCase();
+  const cands = db.planes.filter((x) => x.id !== p.id).map((x) => { const c = x.campanas && x.campanas[ui.camp]; const ls = c && c.fert && c.fert[i] && c.fert[i].lineas; return ls && ls.length ? { x, c } : null; }).filter(Boolean)
+    .sort((a, b) => (a.x.cliente || '').localeCompare(b.x.cliente || '', 'es') || a.x.nombre.localeCompare(b.x.nombre, 'es'));
+  let elegido = null;
+  const md = modal(`Copiar ${mesTxt} de otro plan`, `<p class="small" style="margin-top:0">Elige el plan del que copiar los productos y dosis de <b>${esc(mesTxt)} ${esc(ui.camp)}</b>. Solo salen los planes que ya tienen productos ese mes.</p>
+    <input class="cell izq" id="coQ" type="search" placeholder="Buscar cliente o plan…" autocomplete="off">
+    <div class="lista-imp" id="coL" style="margin-top:8px;max-height:34vh"></div>
+    <div id="coP" style="margin-top:12px"></div>`,
+  { pie: `<label class="chk small"><input type="radio" name="coM" value="sust" checked> Sustituir los ${plural(nActual, 'producto', 'productos')} de este mes</label><label class="chk small"><input type="radio" name="coM" value="add"> Añadirlos a los que hay</label><span class="spacer"></span><button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="coOk" disabled>Copiar</button>`, ancho: true });
+  $$('[data-cerrar]', md).forEach((b) => { b.onclick = cerrarModal; });
+  if (!nActual) md.querySelectorAll('[name="coM"]').forEach((r) => { r.closest('label').hidden = true; });
+  const pintarLista = () => {
+    const q = CALC.norm($('#coQ', md).value).split(/\s+/).filter(Boolean);
+    const vis = cands.filter(({ x }) => { const h = CALC.norm([x.cliente, x.nombre, x.finca, x.cultivo].join(' ')); return q.every((w) => h.includes(w)); });
+    let cli = null, html = '';
+    for (const { x, c } of vis) {
+      if (x.cliente !== cli) { cli = x.cliente; html += `<div class="grupo-cli">${esc(cli || 'Sin cliente')}</div>`; }
+      html += `<label><input type="radio" name="coPl" value="${x.id}" ${elegido && elegido.x.id === x.id ? 'checked' : ''}> ${esc(x.nombre)} <span class="muted small">${esc(x.finca)} · ${plural(c.fert[i].lineas.length, 'producto', 'productos')}</span></label>`;
+    }
+    $('#coL', md).innerHTML = html || `<p class="muted small" style="padding:8px">${cands.length ? 'Ningún plan con esa búsqueda.' : `Ningún otro plan tiene productos en ${esc(mesTxt)}.`}</p>`;
+    $$('[name="coPl"]', md).forEach((r) => { r.onchange = () => { elegido = cands.find((y) => y.x.id === r.value); pintarPrev(); }; });
+  };
+  const pintarPrev = () => {
+    if (!elegido) { $('#coP', md).innerHTML = ''; $('#coOk', md).disabled = true; return; }
+    const m = FERT.mes(elegido.x, elegido.c, i, ix);
+    $('#coP', md).innerHTML = `<h3 style="margin:0 0 6px">${esc(elegido.x.nombre)} · ${esc(mesTxt)}</h3><table class="t small"><tr><th></th><th>Producto</th><th class="n">Dosis/riego</th><th class="n">Riegos</th><th>Periodo</th><th>Tanque</th></tr>
+      ${m.lineas.map((l, k) => `<tr><td><input type="checkbox" data-coL="${k}" checked></td><td><b>${esc(l.prod ? l.prod.nombre : l.nombre)}</b></td><td class="n">${fmt(l.dosis, 1)} ${l.formato === 'ha' ? (l.liquido ? 'L' : 'kg') + '/ha' : (l.liquido ? 'cc' : 'g') + '/pie'}</td><td class="n">${/resto/i.test(l.periodo || '') && nRiegos ? `${nRiegos} <span class="muted">(${fmtIn(l.riegos)})</span>` : fmtIn(l.riegos)}</td><td>${esc(l.periodo || '')}</td><td>${esc(l.tanqueFinal || '')}</td></tr>`).join('')}</table>
+      <p class="small muted">Se copian producto, dosis, unidad, riegos, periodo y tanque. Los de «Resto mes» toman los ${plural(nRiegos, 'riego', 'riegos')} de este plan.</p>`;
+    $('#coOk', md).disabled = false;
+  };
+  $('#coQ', md).oninput = pintarLista;
+  pintarLista(); setTimeout(() => $('#coQ', md).focus(), 50);
+  $('#coOk', md).onclick = () => {
+    if (!elegido) return;
+    const orig = elegido.c.fert[i].lineas;
+    const sel = $$('[data-coL]', md).filter((c) => c.checked).map((c) => +c.dataset.col);
+    if (!sel.length) { toast('Marca algún producto', true); return; }
+    const nuevas = sel.map((k) => { const l = structuredClone(orig[k]); if (/resto/i.test(l.periodo || '') && nRiegos) l.riegos = nRiegos; return l; });
+    const modo = ($('[name="coM"]:checked', md) || {}).value || 'sust';
+    cerrarModal();
+    guardarLineas((ls) => { if (modo === 'add') ls.push(...nuevas); else ls.splice(0, ls.length, ...nuevas); });
+    toast(`${plural(nuevas.length, 'producto copiado', 'productos copiados')} de ${elegido.x.nombre}`);
   };
 }
 
