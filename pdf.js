@@ -26,7 +26,7 @@
     const seccion = (t) => { y = doc.lastAutoTable ? doc.lastAutoTable.finalY + 6 : y; doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...VERDE); doc.text(t, M, y); y += 2; };
 
     const s = anal.suelo, w = anal.agua;
-    const refAn = (a) => (a ? `${a.ref || 's/ref'} (${fecha(a.fecha)})${a.plantilla ? ' · DE PLANTILLA' : ''}` : 'Sin analítica');
+    const refAn = (a) => (a ? (a.origen === 'cartografia' ? `Cartografía de suelos (IMIDA)${a.ref ? ' · ' + a.ref : ''}` : `${a.ref || 's/ref'} (${fecha(a.fecha)})${a.plantilla ? ' · DE PLANTILLA' : ''}`) : 'Sin analítica');
     doc.autoTable({
       ...tablaBase, startY: y, theme: 'plain', styles: { ...tablaBase.styles, cellPadding: 1.2 },
       columnStyles: { 0: { fontStyle: 'bold', textColor: GRIS, cellWidth: 38 }, 2: { fontStyle: 'bold', textColor: GRIS, cellWidth: 38 } },
@@ -588,5 +588,98 @@
     return doc.output('blob');
   }
 
-  root.PDF = { balance, informe, registroFert, registroRiego, planAnual, pedidos };
+
+  /* Plan de abonado RD 1051/2022 por unidad de producción (estructura del modelo oficial).
+     d = { campana, cliente, logo, general:[[l,v]], cultivos, supT, hojas:[…], regimen, rotacion, precipitacion, lluvia, metodo, aplicacion,
+           totUP[3], estKg, estMS, moKg, objetivoMO, medidas, prohibiciones, almacenamiento, proteccion, asesoramiento, cuaderno, autor, recintos:[…] } */
+  function planRD(d) {
+    const o = docReg(false), { doc, K } = o, FIN = o.PH - 18;
+    const nuevaPag = () => { doc.addPage(); return 20; };
+    const sec = (t, y) => { if (y > o.PH - 45) y = nuevaPag(); K.titulo(t, M, y + 4); return y + 7; };
+    const sub = (t, y) => { if (y > o.PH - 35) y = nuevaPag(); K.t(t, M, y + 3, { f: 's', s: 8.4, c: C.verde }); return y + 5.5; };
+    const para = (etq, txt, y) => {
+      const ls = K.lineas(txt == null || txt === '' ? '–' : String(txt), o.AW, 'n', 8.4);
+      const alto = (etq ? 4.4 : 0) + ls.length * 4.1;
+      if (y + Math.min(alto, 14) > FIN) y = nuevaPag();
+      if (etq) { K.t(etq, M, y + 3, { f: 's', s: 8.2 }); y += 4.4; }
+      for (const l of ls) { if (y + 4.1 > FIN) y = nuevaPag(); K.t(l, M, y + 3, { s: 8.4 }); y += 4.1; }
+      return y + 2.2;
+    };
+    const R = { halign: 'right' }, cols = (ks, extra = {}) => ({ ...Object.fromEntries(ks.map((k) => [k, R])), ...extra });
+    const kg = (v) => `${n0_(v)} kg`;
+    let y = cabReg(o, 'Planificación nutricional · RD 1051/2022', `Plan de abonado · Campaña ${d.campana}`, d.logo);
+    K.t(K.lineas('Elaborado conforme al Real Decreto 1051/2022, de 27 de diciembre, por el que se establecen normas para la nutrición sostenible en los suelos agrarios.', o.AW, 'n', 7.6), M, y + 1, { s: 7.6, c: C.gris }); y += 9;
+
+    y = sec('1 · Datos generales de la explotación y del titular', y);
+    y = datosReg(o, d.general, y, 2);
+
+    y = sec('2 · Identificación de recintos y características del cultivo', y);
+    y = para('Cultivos', d.cultivos, y);
+    y = para('Régimen hídrico', d.regimen, y);
+    y = para('Unidad de producción y hojas de cultivo', `Superficie total: ${num(d.supT, 2)} ha en ${d.hojas.length} ${d.hojas.length === 1 ? 'hoja' : 'hojas'} de cultivo. Relación completa de recintos SIGPAC en el Anexo I.`, y);
+    y = tablaReg(o, { y, head: ['HOJA', 'CULTIVO', 'FINCA', 'SUP. (ha)', 'ÁRBOLES', 'PLANTACIÓN', 'ZONA VULN.', 'RENDIMIENTO ESPERADO'],
+      body: d.hojas.map((h) => [h.corto, h.cultivo || '–', h.finca || '–', num(h.sup, 2), h.arboles ? n0_(h.arboles) : '–', h.anio || '–', h.vulnerable ? 'Sí' : 'No', h.prod ? `${num(h.prod, 1)} t/ha (${n0_(h.prod * 1000)} kg/ha)` : '–']),
+      cols: cols([3, 4], { 0: { cellWidth: 16 }, 7: { halign: 'right', cellWidth: 38 } }), fs: 7.8, pie: ['Total', '', '', num(d.supT, 2), '', '', '', ''] }) + 3;
+    y = para('Cultivo precedente / rotación', d.rotacion, y);
+
+    y = sec('3 · Características del suelo y disponibilidad hídrica', y);
+    y = para('Precipitación media anual', `${d.precipitacion || 'Pendiente de completar'}. ${d.lluvia}`, y);
+    y = para('Datos del suelo (art. 6.2)', 'Un recinto representativo por hoja de cultivo.', y);
+    y = tablaReg(o, { y, head: ['HOJA', 'ORIGEN DEL DATO', 'MO %', 'pH', 'CE', 'N TOTAL %', 'NO₃ mg/kg', 'P₂O₅ mg/kg', 'K₂O mg/kg', 'CARBON. %', 'TEXTURA'],
+      body: d.hojas.map((h) => { const s = h.suelo; return [h.corto, s.origen, num(s.mo, 2), num(s.ph, 1), num(s.ce, 2), num(s.ntotal, 2), n0_(s.no3), n0_(s.p2o5), n0_(s.k2o), n0_(s.caliza), s.textura || '–']; }),
+      cols: cols([2, 3, 4, 5, 6, 7, 8, 9], { 0: { cellWidth: 14 }, 1: { cellWidth: 40 } }), fs: 7.4 }) + 2;
+    const notas = ['P₂O₅ y K₂O asimilables calculados a partir del P Olsen y del K de cambio (× 2,29 y × 1,20).'];
+    if (d.hojas.some((h) => h.suelo.carto)) notas.push('Las hojas con «Cartografía de suelos» toman los datos de la Cartografía de Suelos de la Región de Murcia (Proyecto LUCDEME), consultada en el Geoportal del IMIDA (geoportal.imida.es), mientras no haya analítica propia.');
+    for (const n of notas) { const ls = K.lineas(n, o.AW, 'n', 7.2); K.t(ls, M, y + 2.5, { s: 7.2, c: C.gris }); y += ls.length * 3.6 + 1; }
+    y += 2;
+    y = para('Disponibilidad de agua de riego y nutrientes del agua', 'Volumen previsto en la campaña y nutrientes que aporta el agua de riego (kg/ha), descontados del abonado.', y);
+    y = tablaReg(o, { y, head: ['HOJA', 'AGUA DE RIEGO', 'RIEGOS', 'm³/ha', 'N', 'K₂O', 'CaO', 'MgO'],
+      body: d.hojas.map((h) => [h.corto, h.agua.nombre, n0_(h.agua.riegos), n0_(h.agua.m3), n1(h.agua.aporte[0]), n1(h.agua.aporte[2]), n1(h.agua.aporte[3]), n1(h.agua.aporte[4])]),
+      cols: cols([2, 3, 4, 5, 6, 7], { 0: { cellWidth: 14 }, 1: { cellWidth: 60 } }), fs: 7.8 }) + 4;
+
+    y = sec('4 · Cálculo de necesidades y planificación de aportes', y);
+    y = para('Método', d.metodo, y);
+    y = sub('Balance de nitrógeno (kg N/ha)', y);
+    y = tablaReg(o, { y, head: ['HOJA', 'EXTRACCIÓN', '− N SUELO', '− MAT. ORGÁNICA', '− ESTIÉRCOL', '− AGUA', 'N A APORTAR'],
+      body: d.hojas.map((h) => { const b = h.balance; return [h.corto, n1(b.S1), n1(b.E1), n1(b.E2), n1(b.E3), n1(b.E4), n1(b.aporte)]; }), cols: cols([1, 2, 3, 4, 5, 6], { 0: { cellWidth: 16 } }), fs: 7.8 }) + 3;
+    y = sub('Dosis recomendadas de nutrientes (kg/ha)', y);
+    y = tablaReg(o, { y, head: ['HOJA DE CULTIVO', 'N', 'P₂O₅', 'K₂O'], body: d.hojas.map((h) => [h.nombre, n1(h.rec[0]), n1(h.rec[1]), n1(h.rec[2])]), cols: cols([1, 2, 3], { 1: { halign: 'right', cellWidth: 24 }, 2: { halign: 'right', cellWidth: 24 }, 3: { halign: 'right', cellWidth: 24 } }), fs: 7.8 }) + 3;
+    for (const h of d.hojas) {
+      y = sub(`Dosis programadas · ${h.nombre}`, y);
+      y = tablaReg(o, { y, head: ['PRODUCTO', 'TIPO', 'N-P₂O₅-K₂O', 'DOSIS', 'TOTAL HOJA', 'CUÁNDO', 'N', 'P₂O₅', 'K₂O'],
+        body: h.productos.length ? h.productos.map((x) => [x.nombre, x.tipo, x.riq, `${n1(x.dosis)} ${x.u}/ha`, `${n0_(x.total)} ${x.u}`, x.cuando, n1(x.uf[0]), n1(x.uf[1]), n1(x.uf[2])]) : [['Sin fertilizantes programados', '', '', '', '', '', '', '', '']],
+        cols: cols([3, 4, 6, 7, 8], { 0: { cellWidth: 42 }, 2: { halign: 'center' }, 5: { cellWidth: 28 } }), fs: 7.2,
+        pie: ['Aporte programado (kg/ha)', '', '', '', '', '', n1(h.anual[0]), n1(h.anual[1]), n1(h.anual[2])] }) + 3;
+    }
+    y = para('Calendario, forma de aplicación y maquinaria (art. 6.4)', `${d.aplicacion} Calendario: el que figura en la columna «Cuándo», fraccionado en los riegos de cada mes según el plan mensual.`, y);
+    y = sub('Verificación de límites legales (Anexo III, parte I)', y);
+    const vb = [];
+    for (const h of d.hojas) for (const v of h.verif) vb.push([h.corto, v.nu, n1(v.rec), v.lim == null ? '–' : `≤ ${n1(v.lim)} (${v.txtLim})`, n1(v.aport), v.ok == null ? 'SIN CÁLCULO' : v.ok ? 'CUMPLE' : 'NO CUMPLE']);
+    y = tablaReg(o, { y, head: ['HOJA', 'NUTRIENTE', 'NECESIDAD', 'LÍMITE LEGAL (kg/ha)', 'APORTADO', 'RESULTADO'], body: vb, cols: cols([2, 4], { 0: { cellWidth: 16 }, 3: { halign: 'right' }, 5: { halign: 'center', cellWidth: 26 } }), fs: 7.8 }) + 3;
+    const moTxt = [d.estKg > 0 ? `estiércoles y enmiendas ${kg(d.estKg)} (${kg(d.estMS)} de materia seca)` : '', d.moKg > 0 ? `fertilizantes orgánicos sólidos ${kg(d.moKg)}` : ''].filter(Boolean).join('; ');
+    y = para('Aportes totales a la unidad de producción', `Fertilizantes: N ${kg(d.totUP[0])}; P₂O₅ ${kg(d.totUP[1])}; K₂O ${kg(d.totUP[2])}. Materia orgánica aportada: ${moTxt || '0 kg'}.`, y);
+    y = para('Objetivo de materia orgánica (art. 4)', d.objetivoMO, y);
+
+    y = sec('5 · Prácticas de gestión del suelo y reducción de emisiones', y);
+    y = para('Medidas para disminuir las emisiones de amoniaco y gases de efecto invernadero (art. 6.5 y Anexo V)', d.medidas, y);
+    y = para('Prohibiciones y precauciones en la aplicación (art. 4 y Anexo II)', d.prohibiciones, y);
+    y = para('Almacenamiento (art. 4.7)', d.almacenamiento, y);
+    y = para('Protección de aguas y suelos', d.proteccion, y);
+
+    y = sec('6 · Asesoramiento técnico y firmas', y);
+    y = para('Asesoramiento técnico en fertilización', d.asesoramiento, y);
+    y = para('Cuaderno de explotación (art. 4.1 y 5; Anexo I)', d.cuaderno, y);
+    firmas(o, y + 2, d.autor);
+
+    doc.addPage(); y = 20;
+    K.titulo('Anexo I · Relación de recintos SIGPAC', M, y); y += 4;
+    const totSup = d.recintos.reduce((t, r) => t + (+r.sup || 0), 0);
+    tablaReg(o, { y, head: ['ID', 'PROV.', 'MUNICIPIO', 'AGR.', 'ZONA', 'POL.', 'PARC.', 'REC.', 'USO', 'CULTIVO', 'SUP. (ha)', 'HOJA'],
+      body: d.recintos.length ? d.recintos.map((r, k) => [k + 1, r.prov, [r.mun, r.municipio].filter(Boolean).join(' '), r.agr, r.zona, r.pol, r.par, r.rec, r.uso, r.cultivo, num(r.sup, 4), r.hoja]) : [['', '', 'Sin recintos SIGPAC en los planes', '', '', '', '', '', '', '', '', '']],
+      cols: cols([10], { 0: { cellWidth: 9 } }), fs: 7.4, pie: ['', '', 'TOTAL', '', '', '', '', '', '', '', num(totSup, 4), ''] });
+    pieReg(o, `Planificación nutricional · campaña ${d.campana} · ${d.cliente}`);
+    return doc.output('blob');
+  }
+
+  root.PDF = { balance, informe, registroFert, registroRiego, planAnual, pedidos, planRD };
 })(typeof window !== 'undefined' ? window : globalThis);

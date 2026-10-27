@@ -286,10 +286,11 @@
     for (const [a, tipo, nombre] of [[s, 'suelo', 'suelo'], [w, 'agua', 'agua de riego']]) {
       if (!a) { add('alto', `Sin analítica de ${nombre}`, 'analiticas'); continue; }
       if (a.plantilla) { add('alto', `Analítica de ${nombre} de plantilla (no es de esta finca)`, 'analiticas'); continue; }
+      if (a.origen === 'cartografia') { add('bajo', `Suelo de cartografía (IMIDA): conviene una analítica de la finca`, 'analiticas'); continue; }
       const e = edadAnios(a.fecha, hoy);
       const max = (T.antiguedad && T.antiguedad[tipo]) || 4;
       if (e != null && e > max) add('medio', `Analítica de ${nombre} de hace ${String(Math.round(e * 10) / 10).replace('.', ',')} años (máx. ${max})`, 'analiticas');
-      const nueva = db.analiticas.find((x) => x.tipo === tipo && x.id !== a.id && !x.plantilla && x.fecha && a.fecha && x.fecha > a.fecha &&
+      const nueva = db.analiticas.find((x) => x.tipo === tipo && x.id !== a.id && !x.plantilla && x.origen !== 'cartografia' && x.fecha && a.fecha && x.fecha > a.fecha &&
         db.planes.some((p) => (tipo === 'suelo' ? p.analSuelo : p.analAgua) === x.id && p.id !== plan.id && p.carpeta && p.carpeta === plan.carpeta));
       if (nueva) add('medio', `Hay una analítica de ${nombre} más nueva en esta finca (${nueva.fecha})`, 'analiticas');
     }

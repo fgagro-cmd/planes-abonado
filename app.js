@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.6.3';
+const APP_VERSION = '1.7.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -38,8 +38,8 @@ const TEXTO_PIE = 'Este programa de cálculo ha sido diseñado íntegramente par
 function dbVacia() {
   return {
     version: 1, creado: new Date().toISOString(), guardado: null,
-    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' } },
-    planes: [], analiticas: [], textos: {}
+    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' }, rd: { precipitacion: '', lluvia: '', asesor: '', registro: '', objetivoMO: '', prohibiciones: '', almacenamiento: '', proteccion: '', asesoramiento: '', cuaderno: '' } },
+    planes: [], analiticas: [], textos: {}, titulares: {}
   };
 }
 function migrar(d) {
@@ -50,7 +50,8 @@ function migrar(d) {
   d.config.mx = d.config.mx || { url: '', clave: '' };
   d.config.pie = { ...v.config.pie, ...(d.config.pie || {}) };
   d.config.planAnual = { ...v.config.planAnual, ...(d.config.planAnual || {}) };
-  d.textos = d.textos || {};
+  d.config.rd = { ...v.config.rd, ...(d.config.rd || {}) };
+  d.textos = d.textos || {}; d.titulares = d.titulares || {};
   d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
 }
@@ -510,6 +511,7 @@ function tabFinca(el, p) {
     <div class="scroll-x"><table class="t"><tr>${CALC.MESES.map((m) => `<th class="n">${m.slice(0, 3)}</th>`).join('')}<th></th></tr>
       <tr>${kc.map((k, i) => `<td><input class="cell" data-kc="${i}" value="${fmtIn(k)}"></td>`).join('')}<td><button class="btn peq" id="fKcGrupo" title="Volver al Kc del grupo">Usar el del grupo</button></td></tr></table></div>
     ${mx}
+    ${htmlRD(p)}
     <div class="row" style="margin-top:18px"><span class="small muted">Importado de <code>${esc((p.origen && p.origen.ruta) || '—')}</code> ${p.origen ? fechaEs(p.origen.importado) : ''}</span><span class="spacer"></span><button class="btn peq" id="fDup">Duplicar plan</button><button class="btn peq rojo" id="fDel">Borrar plan</button></div>`;
   enlazarCampos(el, p, (ruta, val) => {
     if (ruta === 'p.tipoCultivo') { const c = CALC.CULTIVOS.find((x) => x.nombre === val); if (c) p.grupo = c.grupo; }
@@ -531,6 +533,7 @@ function tabFinca(el, p) {
   };
   const fa = $('#fAuto', el);
   if (fa) fa.onclick = () => { const r = enlazarPlan(p, true); commit(() => {}, { render: false }); renderDetalleSoloCuerpo(); toast(r ? 'Enlazado con ' + r : 'No se encontró por nombre: elígelo en la lista', !r); };
+  enlazarRD(el, p);
   if (od === 'listo') ALM.existeCarpetaCliente(p.carpeta).then((ok) => { const s = $('#fCarp'); if (s && !ok) s.innerHTML += ' <span class="chip amb">esa carpeta no existe: se creará con el primer PDF</span>'; });
 }
 
@@ -538,16 +541,16 @@ function tabFinca(el, p) {
 const RANGOS = { pctK: [0.025, 0.05], pctCa: [0.7, 0.75], pctMg: [0.08, 0.15] };
 function opcionesAnal(tipo, sel) {
   const l = db.analiticas.filter((a) => a.tipo === tipo).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
-  return `<option value="">— Sin analítica —</option>` + l.map((a) => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.nombre)} · ${fechaEs(a.fecha)}${a.ref ? ' · ' + esc(a.ref) : ''}${a.plantilla ? ' · PLANTILLA' : ''}</option>`).join('');
+  return `<option value="">— Sin analítica —</option>` + l.map((a) => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.nombre)} · ${fechaEs(a.fecha)}${a.ref ? ' · ' + esc(a.ref) : ''}${a.plantilla ? ' · PLANTILLA' : ''}${a.origen === 'cartografia' ? ' · CARTOGRAFÍA' : ''}</option>`).join('');
 }
 function usos(a) { return db.planes.filter((p) => p.analSuelo === a.id || p.analAgua === a.id || Object.values(p.campanas || {}).some((c) => (c.estiercoles || []).some((e) => e.analId === a.id))); }
 function resumenSuelo(a) {
   if (!a) return '<p class="muted small">Sin analítica de suelo.</p>';
   const r = CALC.suelo(a), v = a.v || {};
   const pc = (x, rg) => (x == null ? '–' : `<span class="${x < rg[0] || x > rg[1] ? 'chip amb' : 'chip v'}">${fmt(x * 100, 1)} %</span>`);
-  return `${a.plantilla ? '<div class="aviso alto">Es la analítica de la plantilla, copiada en muchos Excels: no es de esta finca.</div>' : ''}
-    <table class="t" style="margin-top:8px"><tr><th>Fecha</th><th>Ref.</th><th>Textura</th><th class="n">CE</th><th class="n">pH</th><th class="n">MO %</th><th class="n">NO3 mg/kg</th></tr>
-    <tr><td>${fechaEs(a.fecha)}</td><td>${esc(a.ref || '–')}</td><td>${esc(v.textura || '–')}</td><td class="n">${fmt(v.ce, 2)}</td><td class="n">${fmt(v.ph, 1)}</td><td class="n">${fmt(v.mo, 2)}</td><td class="n">${fmt(v.no3, 0)}</td></tr></table>
+  return `${a.plantilla ? '<div class="aviso alto">Es la analítica de la plantilla, copiada en muchos Excels: no es de esta finca.</div>' : ''}${a.origen === 'cartografia' ? '<div class="aviso bajo">Datos de la cartografía de suelos (IMIDA), mientras no haya analítica de esta finca.</div>' : ''}
+    <table class="t" style="margin-top:8px"><tr><th>Fecha</th><th>Ref.</th><th>Textura</th><th class="n">CE</th><th class="n">pH</th><th class="n">MO %</th><th class="n">NO3 mg/kg</th><th class="n">Carbon. %</th></tr>
+    <tr><td>${fechaEs(a.fecha)}</td><td>${esc(a.ref || '–')}</td><td>${esc(v.textura || '–')}</td><td class="n">${fmt(v.ce, 2)}</td><td class="n">${fmt(v.ph, 1)}</td><td class="n">${fmt(v.mo, 2)}</td><td class="n">${fmt(v.no3, 0)}</td><td class="n">${fmt(v.caliza, 0)}</td></tr></table>
     <table class="t" style="margin-top:8px"><tr><th></th><th class="n">mg/kg</th><th class="n">meq/100 g</th><th class="n">% bases</th><th>Ideal</th></tr>
     ${[['K', 'k', 'pctK', '2,5-5 %'], ['Ca', 'ca', 'pctCa', '70-75 %'], ['Mg', 'mg', 'pctMg', '8-15 %'], ['Na', 'na', null, '']].map(([t, k, pk, id]) => `<tr><td><b>${t}</b></td><td class="n">${fmt(v[k], 0)}</td><td class="n">${fmt(r.meq[k], 2)}</td><td class="n">${pk ? pc(r[pk], RANGOS[pk]) : ''}</td><td class="muted small">${id}</td></tr>`).join('')}</table>
     <div class="row small" style="margin-top:8px"><span class="chip">K/Mg ${fmt(r.kMg, 2)} <span class="muted">(0,3 ideal)</span></span><span class="chip">Ca/Mg ${fmt(r.caMg, 2)} <span class="muted">(2-5)</span></span><span class="chip">Ca/K ${fmt(r.caK, 1)} <span class="muted">(&lt; 30)</span></span></div>`;
@@ -608,7 +611,7 @@ function editarAnalitica(a, paraPlan = null) {
     campos = `<div class="grid4">
       <label class="fld"><span>Textura</span><select data-avt="textura">${['Arenosa', 'Franca', 'Arcillosa'].map((t) => `<option ${CALC.texturaTabla(v.textura) === CALC.texturaTabla(t) && v.textura ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       ${f('Densidad (g/cm³)', 'densidad', v.densidad)}${f('CE (mS/cm)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}
-      ${f('Materia orgánica (%)', 'mo', v.mo)}${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}${f('Fósforo P Olsen (mg/kg)', 'p', v.p)}</div>
+      ${f('Materia orgánica (%)', 'mo', v.mo)}${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}${f('Fósforo P Olsen (mg/kg)', 'p', v.p)}${f('Nitrógeno total (%)', 'ntotal', v.ntotal)}${f('Carbonatos totales (%)', 'caliza', v.caliza)}</div>
       <h3 style="margin-top:14px">Cationes</h3><div class="grid4">${['k', 'ca', 'mg', 'na'].map((k) => `<label class="fld"><span>${{ k: 'Potasio (K)', ca: 'Calcio (Ca)', mg: 'Magnesio (Mg)', na: 'Sodio (Na)' }[k]} ${unidad(k)}</span><input data-av="${k}" value="${esc(fmtIn(v[k]))}"></label>`).join('')}</div>`;
   } else if (a.tipo === 'agua') {
     campos = `<div class="grid4">${f('CE (dS/m)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}${f('Nitratos NO3 (mg/L)', 'no3', v.no3)}${f('Fósforo P (mg/L)', 'p', v.p)}
@@ -637,7 +640,8 @@ function editarAnalitica(a, paraPlan = null) {
       <label class="fld" style="grid-column:span 2"><span>Nombre ${a.tipo === 'agua' ? '(p. ej. comunidad de regantes)' : ''}</span><input data-am="nombre" value="${esc(a.nombre || '')}"></label>
       <label class="fld"><span>Fecha</span><input type="date" data-am="fecha" value="${esc(a.fecha || '')}"></label>
       <label class="fld"><span>Referencia</span><input data-am="ref" value="${esc(a.ref || '')}"></label>
-      <label class="fld" style="grid-column:span 2"><span>Laboratorio</span><input data-am="lab" value="${esc(a.lab || '')}"></label>
+      ${a.tipo === 'suelo' ? `<label class="fld"><span>Origen de los datos</span><select data-am="origen"><option value="" ${a.origen !== 'cartografia' ? 'selected' : ''}>Analítica de laboratorio</option><option value="cartografia" ${a.origen === 'cartografia' ? 'selected' : ''}>Cartografía de suelos (IMIDA)</option></select></label>` : ''}
+      <label class="fld" style="grid-column:span ${a.tipo === 'suelo' ? 1 : 2}"><span>Laboratorio</span><input data-am="lab" value="${esc(a.lab || '')}"></label>
       <label class="fld" style="grid-column:span 2"><span>Notas</span><input data-am="notas" value="${esc(a.notas || '')}"></label>
     </div><div style="margin-top:12px">${campos}</div>
     ${a.tipo !== 'estiercol' ? `<label class="chk" style="margin-top:12px"><input type="checkbox" data-am="plantilla" ${a.plantilla ? 'checked' : ''}> Es de plantilla (no es real de ninguna finca)</label>` : ''}
@@ -1191,6 +1195,7 @@ function analiticasInforme(p, camp) {
   const nom = { suelo: 'suelo', agua: 'agua', estiercol: 'estiércol' };
   const revisar = (tipo, a) => {
     const max = +T[tipo] || (tipo === 'suelo' ? 4 : tipo === 'agua' ? 2 : 1);
+    if (a && a.origen === 'cartografia') { recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `Los datos de ${nom[tipo]} de esta finca son de la cartografía oficial de suelos, no de una analítica. ${porque[tipo]}` }); return; }
     if (!a || a.plantilla || !a.fecha) { recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `No tenemos una analítica de ${nom[tipo]} de esta finca. ${porque[tipo]}` }); return; }
     const e = CALC.edadAnios(a.fecha);
     if (e != null && e > max) recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `La última es de ${mesLargo(a.fecha)} y tiene más de ${plural(max, 'año', 'años')}. ${porque[tipo]}` });
@@ -1697,6 +1702,11 @@ function renderAjustes(v) {
       <label class="fld"><span>Forma de aplicación y maquinaria</span><textarea id="aPaApl" rows="3" placeholder="${esc(TEXTO_APLICACION)}">${esc((c.planAnual || {}).aplicacion || '')}</textarea></label>
       <label class="fld" style="margin-top:10px"><span>Medidas para reducir emisiones de amoniaco y gases de efecto invernadero</span><textarea id="aPaMed" rows="4" placeholder="${esc(TEXTO_MEDIDAS)}">${esc((c.planAnual || {}).medidas || '')}</textarea></label>
       <p class="small muted">Vacío = el texto de ejemplo que se ve en gris.</p></div>
+    <div class="card"><h3>Plan de abonado RD 1051/2022 (Registros)</h3>
+      <div class="grid2"><label class="fld"><span>Asesor (nombre que firma)</span><input data-rd="asesor" value="${esc((c.rd || {}).asesor || '')}" placeholder="${esc(c.autor || '')}"></label><label class="fld"><span>Nº de registro del asesor</span><input data-rd="registro" value="${esc((c.rd || {}).registro || '')}"></label>
+      <label class="fld"><span>Precipitación media anual (mm)</span><input data-rd="precipitacion" value="${esc((c.rd || {}).precipitacion || '')}" inputmode="decimal" placeholder="Zona de Mula"></label></div>
+      ${[['lluvia', 'Reparto de la lluvia en el año'], ['objetivoMO', 'Objetivo de materia orgánica'], ['prohibiciones', 'Prohibiciones y precauciones'], ['almacenamiento', 'Almacenamiento'], ['proteccion', 'Protección de aguas y suelos'], ['asesoramiento', 'Asesoramiento técnico'], ['cuaderno', 'Cuaderno de explotación']].map(([k, l]) => `<label class="fld" style="margin-top:10px"><span>${l}</span><textarea data-rd="${k}" rows="3" placeholder="${esc(RD_TXT[k])}">${esc((c.rd || {})[k] || '')}</textarea></label>`).join('')}
+      <p class="small muted">Forma de aplicación y medidas de emisiones: las del plan anual (arriba). Vacío = el texto de ejemplo en gris.</p></div>
     <div class="card"><h3>Copia de seguridad</h3><div class="row"><button class="btn" id="aExp">Descargar copia (.json)</button><label class="btn">Restaurar copia…<input type="file" id="aRes" accept=".json,application/json" hidden></label></div></div>
   </div>
   <div>
@@ -1743,6 +1753,7 @@ function renderAjustes(v) {
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
   $('#aPaApl').onchange = (e) => commit((d) => { d.config.planAnual.aplicacion = e.target.value.trim(); }, { render: false });
+  $$('[data-rd]', v).forEach((i) => i.onchange = () => commit((d) => { d.config.rd = d.config.rd || {}; d.config.rd[i.dataset.rd] = i.value.trim(); }, { render: false }));
   $('#aPaMed').onchange = (e) => commit((d) => { d.config.planAnual.medidas = e.target.value.trim(); }, { render: false });
   $('#aPieT').onchange = (e) => commit((d) => { d.config.pie.texto = e.target.value.trim(); }, { render: false });
   $('#aPieTel').onchange = (e) => commit((d) => { d.config.pie.telefono = e.target.value.trim(); }, { render: false });
