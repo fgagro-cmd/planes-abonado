@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -549,10 +549,11 @@ function resumenSuelo(a) {
   const r = CALC.suelo(a), v = a.v || {};
   const pc = (x, rg) => (x == null ? '–' : `<span class="${x < rg[0] || x > rg[1] ? 'chip amb' : 'chip v'}">${fmt(x * 100, 1)} %</span>`);
   return `${a.plantilla ? '<div class="aviso alto">Es la analítica de la plantilla, copiada en muchos Excels: no es de esta finca.</div>' : ''}${a.origen === 'cartografia' ? '<div class="aviso bajo">Datos de la cartografía de suelos (IMIDA), mientras no haya analítica de esta finca.</div>' : ''}
-    <table class="t" style="margin-top:8px"><tr><th>Fecha</th><th>Ref.</th><th>Textura</th><th class="n">CE</th><th class="n">pH</th><th class="n">MO %</th><th class="n">NO3 mg/kg</th><th class="n">Carbon. %</th></tr>
-    <tr><td>${fechaEs(a.fecha)}</td><td>${esc(a.ref || '–')}</td><td>${esc(v.textura || '–')}</td><td class="n">${fmt(v.ce, 2)}</td><td class="n">${fmt(v.ph, 1)}</td><td class="n">${fmt(v.mo, 2)}</td><td class="n">${fmt(v.no3, 0)}</td><td class="n">${fmt(v.caliza, 0)}</td></tr></table>
+    <div class="scroll-x"><table class="t" style="margin-top:8px"><tr><th>Fecha</th><th>Ref.</th><th>Textura</th><th class="n">CE</th><th class="n">pH</th><th class="n">MO %</th><th class="n">N total %</th><th class="n">C/N</th><th class="n">NO3 mg/kg</th><th class="n">P Olsen</th><th class="n">Carbon. %</th><th class="n">Caliza act. %</th></tr>
+    <tr><td>${fechaEs(a.fecha)}</td><td>${esc(a.ref || '–')}</td><td>${esc(v.textura || '–')}${v.arcilla != null ? ` <span class="muted small">${fmt(v.arena, 0)}/${fmt(v.limo, 0)}/${fmt(v.arcilla, 0)}</span>` : ''}</td><td class="n">${fmt(v.ce, 2)}</td><td class="n">${fmt(v.ph, 1)}</td><td class="n">${fmt(v.mo, 2)}</td><td class="n">${fmt(v.ntotal, 3)}</td><td class="n">${fmt(CALC.relCN(v), 1)}</td><td class="n">${fmt(v.no3, 0)}</td><td class="n">${fmt(v.p, 1)}</td><td class="n">${fmt(v.caliza, 1)}</td><td class="n">${fmt(v.calizaActiva, 1)}</td></tr></table></div>
+    ${['fe', 'mn', 'cu', 'zn', 'b', 'cl', 'so4'].some((k) => v[k] != null) ? `<div class="row small" style="margin-top:6px">${[['Fe', 'fe', 'mg/kg'], ['Mn', 'mn', 'mg/kg'], ['Cu', 'cu', 'mg/kg'], ['Zn', 'zn', 'mg/kg'], ['B', 'b', 'mg/kg'], ['Cl', 'cl', 'meq/100 g'], ['SO4', 'so4', 'meq/100 g']].filter(([, k]) => v[k] != null).map(([t, k, u]) => `<span class="chip">${t} ${fmt(v[k], 2)} <span class="muted">${u}</span></span>`).join('')}</div>` : ''}
     <table class="t" style="margin-top:8px"><tr><th></th><th class="n">mg/kg</th><th class="n">meq/100 g</th><th class="n">% bases</th><th>Ideal</th></tr>
-    ${[['K', 'k', 'pctK', '2,5-5 %'], ['Ca', 'ca', 'pctCa', '70-75 %'], ['Mg', 'mg', 'pctMg', '8-15 %'], ['Na', 'na', null, '']].map(([t, k, pk, id]) => `<tr><td><b>${t}</b></td><td class="n">${fmt(v[k], 0)}</td><td class="n">${fmt(r.meq[k], 2)}</td><td class="n">${pk ? pc(r[pk], RANGOS[pk]) : ''}</td><td class="muted small">${id}</td></tr>`).join('')}</table>
+    ${[['K', 'k', 'pctK', '2,5-5 %'], ['Ca', 'ca', 'pctCa', '70-75 %'], ['Mg', 'mg', 'pctMg', '8-15 %'], ['Na', 'na', null, '']].map(([t, k, pk, id]) => `<tr><td><b>${t}</b></td><td class="n">${fmt((a.u || {})[k] === 'meq/100 g' ? (r.meq[k] == null ? null : r.meq[k] * { k: 391, ca: 200.4, mg: 121.6, na: 230 }[k]) : v[k], 0)}</td><td class="n">${fmt(r.meq[k], 2)}</td><td class="n">${pk ? pc(r[pk], RANGOS[pk]) : ''}</td><td class="muted small">${id}</td></tr>`).join('')}</table>
     <div class="row small" style="margin-top:8px"><span class="chip">K/Mg ${fmt(r.kMg, 2)} <span class="muted">(0,3 ideal)</span></span><span class="chip">Ca/Mg ${fmt(r.caMg, 2)} <span class="muted">(2-5)</span></span><span class="chip">Ca/K ${fmt(r.caK, 1)} <span class="muted">(&lt; 30)</span></span></div>`;
 }
 function resumenAgua(a) {
@@ -564,7 +565,9 @@ function resumenAgua(a) {
     <table class="t"><tr><th>Fecha ${fechaEs(a.fecha)}${a.ref ? ' · ' + esc(a.ref) : ''}</th><th class="n">mg/L</th><th class="n">meq/L</th><th>&nbsp;</th><th class="n"></th></tr>
     <tr><td>CE (dS/m)</td><td class="n">${fmt(v.ce, 2)}</td><td></td><td>pH</td><td class="n">${fmt(v.ph, 1)}</td></tr>
     ${[['Nitratos NO3', 'no3', 1], ['Potasio K', 'k', 1], ['Calcio Ca', 'ca', 0], ['Magnesio Mg', 'mg', 0], ['Sodio Na', 'na', 0], ['Sulfatos SO4', 'so4', 0], ['Cloruros Cl', 'cl', 0]].map(([t, k, d]) => `<tr><td>${t}</td><td class="n">${fmt(v[k], d)}</td><td class="n muted">${fmt(r.meq[k], 2)}</td><td></td><td></td></tr>`).join('')}
-    <tr><td>Bicarbonatos HCO3</td><td></td><td class="n">${fmt(v.hco3, 2)}</td><td>Boro (mg/L)</td><td class="n">${fmt(v.b, 2)}</td></tr></table>`;
+    <tr><td>Bicarbonatos HCO3</td><td></td><td class="n">${fmt(v.hco3, 2)}</td><td>Boro (mg/L)</td><td class="n">${fmt(v.b, 2)}</td></tr>
+    ${v.co3 != null ? `<tr><td>Carbonatos CO3</td><td></td><td class="n">${fmt(v.co3, 2)}</td><td></td><td></td></tr>` : ''}</table>
+    <div class="row small" style="margin-top:6px"><span class="chip">SAR ${fmt(r.sar, 2)}</span><span class="chip">Dureza ${fmt(r.dureza, 1)} ºf</span>${r.balance != null ? `<span class="chip ${Math.abs(r.balance) > 10 ? 'amb' : ''}">Cationes ${fmt(r.cat, 1)} / aniones ${fmt(r.an, 1)} meq/L</span>` : ''}</div>`;
 }
 function tabAnaliticas(el, p, camp) {
   const s = anal(p.analSuelo), w = anal(p.analAgua);
@@ -608,15 +611,27 @@ function editarAnalitica(a, paraPlan = null) {
   const unidad = (k) => `<select data-au="${k}" class="cell izq" style="width:auto"><option ${u[k] !== 'meq/100 g' ? 'selected' : ''}>mg/kg</option><option ${u[k] === 'meq/100 g' ? 'selected' : ''}>meq/100 g</option></select>`;
   let campos = '';
   if (a.tipo === 'suelo') {
-    campos = `<div class="grid4">
-      <label class="fld"><span>Textura</span><select data-avt="textura">${['Arenosa', 'Franca', 'Arcillosa'].map((t) => `<option ${CALC.texturaTabla(v.textura) === CALC.texturaTabla(t) && v.textura ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      ${f('Densidad (g/cm³)', 'densidad', v.densidad)}${f('CE (mS/cm)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}
-      ${f('Materia orgánica (%)', 'mo', v.mo)}${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}${f('Fósforo P Olsen (mg/kg)', 'p', v.p)}${f('Nitrógeno total (%)', 'ntotal', v.ntotal)}${f('Carbonatos totales (%)', 'caliza', v.caliza)}</div>
-      <h3 style="margin-top:14px">Cationes</h3><div class="grid4">${['k', 'ca', 'mg', 'na'].map((k) => `<label class="fld"><span>${{ k: 'Potasio (K)', ca: 'Calcio (Ca)', mg: 'Magnesio (Mg)', na: 'Sodio (Na)' }[k]} ${unidad(k)}</span><input data-av="${k}" value="${esc(fmtIn(v[k]))}"></label>`).join('')}</div>`;
+    const txt = v.textura && !CALC.CLASES_TEXTURA.includes(v.textura) ? [...CALC.CLASES_TEXTURA, v.textura] : CALC.CLASES_TEXTURA;
+    campos = `<h3>Análisis físico</h3><div class="grid4">
+      ${f('Arena (%)', 'arena', v.arena, 'data-gran')}${f('Limo (%)', 'limo', v.limo, 'data-gran')}${f('Arcilla (%)', 'arcilla', v.arcilla, 'data-gran')}
+      <label class="fld"><span>Textura</span><select data-avt="textura" id="aTex"><option value="">—</option>${txt.map((t) => `<option ${t === v.textura ? 'selected' : ''}>${t}</option>`).join('')}</select><span class="auto" id="aTexAuto"></span></label>
+      ${f('Densidad aparente (g/cm³)', 'densidad', v.densidad)}</div>
+      <h3 style="margin-top:14px">Físico-químico</h3><div class="grid4">
+      ${f('pH (1:2,5 en agua)', 'ph', v.ph)}${f('CE (dS/m)', 'ce', v.ce)}
+      <label class="fld"><span>Extracto de la CE</span><select data-avt="ceExtracto"><option value="1:5" ${v.ceExtracto !== 'pasta' ? 'selected' : ''}>1:5 en agua</option><option value="pasta" ${v.ceExtracto === 'pasta' ? 'selected' : ''}>Pasta saturada</option></select></label></div>
+      <h3 style="margin-top:14px">Materia orgánica y nitrógeno</h3><div class="grid4">
+      ${f('MO oxidable (%) · la del cálculo', 'mo', v.mo)}${f('MO total (%)', 'moTotal', v.moTotal)}${f('Carbono orgánico total (%)', 'cot', v.cot)}${f('Nitrógeno total Kjeldahl (%)', 'ntotal', v.ntotal)}
+      ${f('Nitratos NO3 (mg/kg)', 'no3', v.no3)}<label class="fld"><span>Relación C/N</span><input id="aCN" disabled value=""></label></div>
+      <h3 style="margin-top:14px">Carbonatos, fósforo y boro</h3><div class="grid4">
+      ${f('Carbonatos totales (%)', 'caliza', v.caliza)}${f('Caliza activa (%)', 'calizaActiva', v.calizaActiva)}${f('Fósforo P Olsen (mg/kg)', 'p', v.p)}${f('Boro asimilable (mg/kg)', 'b', v.b)}</div>
+      <h3 style="margin-top:14px">Cationes asimilables</h3><div class="grid4">${['k', 'ca', 'mg', 'na'].map((k) => `<label class="fld"><span>${{ k: 'Potasio (K)', ca: 'Calcio (Ca)', mg: 'Magnesio (Mg)', na: 'Sodio (Na)' }[k]} ${unidad(k)}</span><input data-av="${k}" value="${esc(fmtIn(v[k]))}"></label>`).join('')}</div>
+      <h3 style="margin-top:14px">Microelementos asimilables (mg/kg)</h3><div class="grid4">${f('Hierro (Fe)', 'fe', v.fe)}${f('Manganeso (Mn)', 'mn', v.mn)}${f('Cobre (Cu)', 'cu', v.cu)}${f('Zinc (Zn)', 'zn', v.zn)}</div>
+      <h3 style="margin-top:14px">Aniones solubles, extracto 1:5 (meq/100 g)</h3><div class="grid4">${f('Cloruros (Cl)', 'cl', v.cl)}${f('Sulfatos (SO4)', 'so4', v.so4)}</div>`;
   } else if (a.tipo === 'agua') {
     campos = `<div class="grid4">${f('CE (dS/m)', 'ce', v.ce)}${f('pH', 'ph', v.ph)}${f('Nitratos NO3 (mg/L)', 'no3', v.no3)}${f('Fósforo P (mg/L)', 'p', v.p)}
       ${f('Potasio K (mg/L)', 'k', v.k)}${f('Calcio Ca (mg/L)', 'ca', v.ca)}${f('Magnesio Mg (mg/L)', 'mg', v.mg)}${f('Sodio Na (mg/L)', 'na', v.na)}
-      ${f('Sulfatos SO4 (mg/L)', 'so4', v.so4)}${f('Cloruros Cl (mg/L)', 'cl', v.cl)}${f('Bicarbonatos HCO3 (meq/L)', 'hco3', v.hco3)}${f('Boro B (mg/L)', 'b', v.b)}</div>`;
+      ${f('Sulfatos SO4 (mg/L)', 'so4', v.so4)}${f('Cloruros Cl (mg/L)', 'cl', v.cl)}${f('Bicarbonatos HCO3 (meq/L)', 'hco3', v.hco3)}${f('Carbonatos CO3 (meq/L)', 'co3', v.co3)}
+      ${f('Boro B (mg/L)', 'b', v.b)}</div>`;
   } else {
     campos = `<div class="grid4"><label class="fld" style="grid-column:span 2"><span>Tipo (tabla 4)</span><select data-avt="tipo">${CALC.TABLAS.estiercol.map((t) => `<option ${CALC.norm(t.tipo) === CALC.norm(v.tipo) ? 'selected' : ''}>${t.tipo}</option>`).join('')}</select></label>
       ${f('Materia seca (%)', 'ms', v.ms, 'placeholder="60 si no hay dato"')}${f('Nitrógeno total (% s.m.s.)', 'n', v.n, 'placeholder="riqueza de la tabla 4"')}
@@ -648,6 +663,18 @@ function editarAnalitica(a, paraPlan = null) {
     ${enlaces}`,
   { pie: `${!nueva ? '<button class="btn rojo" id="mDel">Borrar</button><span class="spacer"></span>' : ''}<button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="mOk">Guardar</button>`, ancho: true });
   $$('[data-cerrar]', m).forEach((b) => { b.onclick = cerrarModal; });
+  if (a.tipo === 'suelo') {
+    const val = (k) => { const i = $(`[data-av="${k}"]`, m); return i ? CALC.num(i.value) : null; };
+    const vivo = (inicio) => {
+      const cl = CALC.claseTextura(val('arena'), val('limo'), val('arcilla')), sel = $('#aTex', m);
+      $('#aTexAuto', m).textContent = cl ? `Por granulometría: ${cl}` : '';
+      if (cl && !(inicio && sel.value)) { if (![...sel.options].some((o) => o.value === cl)) sel.add(new Option(cl, cl)); sel.value = cl; }
+      const cot = val('cot') ?? (val('moTotal') != null ? val('moTotal') / 1.724 : null), n = val('ntotal');
+      $('#aCN', m).value = cot != null && n ? fmtIn(Math.round(cot / n * 10) / 10) : '';
+    };
+    $$('[data-av]', m).forEach((i) => i.addEventListener('input', () => vivo(false)));
+    vivo(true);
+  }
   $('#mOk', m).onclick = () => {
     const obj = nueva ? { id: uid('a'), tipo: a.tipo, v: {}, u: {} } : a;
     commit((d) => {

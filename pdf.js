@@ -626,7 +626,7 @@
     y = para('Precipitación media anual', `${d.precipitacion || 'Pendiente de completar'}. ${d.lluvia}`, y);
     y = para('Datos del suelo (art. 6.2)', 'Un recinto representativo por hoja de cultivo.', y);
     y = tablaReg(o, { y, head: ['HOJA', 'ORIGEN DEL DATO', 'MO %', 'pH', 'CE', 'N TOTAL %', 'NO₃ mg/kg', 'P₂O₅ mg/kg', 'K₂O mg/kg', 'CARBON. %', 'TEXTURA'],
-      body: d.hojas.map((h) => { const s = h.suelo; return [h.corto, s.origen, num(s.mo, 2), num(s.ph, 1), num(s.ce, 2), num(s.ntotal, 2), n0_(s.no3), n0_(s.p2o5), n0_(s.k2o), n0_(s.caliza), s.textura || '–']; }),
+      body: d.hojas.map((h) => { const s = h.suelo; return [h.corto, s.origen, num(s.mo, 2), num(s.ph, 1), num(s.ce, 2), num(s.ntotal, 3), n0_(s.no3), n0_(s.p2o5), n0_(s.k2o), n0_(s.caliza), s.textura || '–']; }),
       cols: cols([2, 3, 4, 5, 6, 7, 8, 9], { 0: { cellWidth: 14 }, 1: { cellWidth: 40 } }), fs: 7.4 }) + 2;
     const notas = ['P₂O₅ y K₂O asimilables calculados a partir del P Olsen y del K de cambio (× 2,29 y × 1,20).'];
     if (d.hojas.some((h) => h.suelo.carto)) notas.push('Las hojas con «Cartografía de suelos» toman los datos de la Cartografía de Suelos de la Región de Murcia (Proyecto LUCDEME), consultada en el Geoportal del IMIDA (geoportal.imida.es), mientras no haya analítica propia.');

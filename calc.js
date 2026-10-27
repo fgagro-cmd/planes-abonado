@@ -73,6 +73,34 @@
   const r2 = (v, d = 2) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
   const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
+  /* Clase textural USDA a partir de arena, limo y arcilla (%) */
+  const CLASES_TEXTURA = ['Arenosa', 'Arenosa franca', 'Franco arenosa', 'Franca', 'Franco limosa', 'Limosa', 'Franco arcillo arenosa', 'Franco arcillosa', 'Franco arcillo limosa', 'Arcillo arenosa', 'Arcillo limosa', 'Arcillosa'];
+  function claseTextura(arena, limo, arcilla) {
+    let s = num(arena), l = num(limo), c = num(arcilla);
+    if ([s, l, c].filter((x) => x != null).length < 2) return null;
+    if (s == null) s = 100 - l - c; if (l == null) l = 100 - s - c; if (c == null) c = 100 - s - l;
+    const t = s + l + c; if (t < 90 || t > 110) return null;
+    s = s * 100 / t; l = l * 100 / t; c = c * 100 / t;
+    if (l + 1.5 * c < 15) return 'Arenosa';
+    if (l + 2 * c < 30) return 'Arenosa franca';
+    if ((c >= 7 && c < 20 && s > 52) || (c < 7 && l < 50)) return 'Franco arenosa';
+    if (c >= 7 && c < 27 && l >= 28 && l < 50 && s <= 52) return 'Franca';
+    if (l >= 80 && c < 12) return 'Limosa';
+    if ((l >= 50 && c >= 12 && c < 27) || (l >= 50 && l < 80 && c < 12)) return 'Franco limosa';
+    if (c >= 20 && c < 35 && l < 28 && s > 45) return 'Franco arcillo arenosa';
+    if (c >= 27 && c < 40 && s > 20 && s <= 45) return 'Franco arcillosa';
+    if (c >= 27 && c < 40 && s <= 20) return 'Franco arcillo limosa';
+    if (c >= 35 && s > 45) return 'Arcillo arenosa';
+    if (c >= 40 && l >= 40) return 'Arcillo limosa';
+    if (c >= 40) return 'Arcillosa';
+    return 'Franca';
+  }
+  /* Relación C/N del suelo: carbono orgánico (o MO total / 1,724) entre N total */
+  function relCN(v) {
+    v = v || {}; const n = num(v.ntotal); if (!n) return null;
+    const c = num(v.cot) ?? (num(v.moTotal) != null ? num(v.moTotal) / 1.724 : null);
+    return c != null ? c / n : null;
+  }
   function texturaTabla(t) {
     const k = norm(t);
     if (k.startsWith('arcill')) return 'Arcilloso';
@@ -144,7 +172,10 @@
       no3: m('no3', 62, 1), k: m('k', 39.1, 1), ca: m('ca', 40.08, 2), mg: m('mg', 24.3, 2), na: m('na', 23, 1),
       so4: m('so4', 96, 2), cl: m('cl', 35.5, 1), hco3: num(v.hco3)
     };
-    return { meq: r, kMg: r.k != null && r.mg ? r.k / r.mg : null, caMg: r.ca != null && r.mg ? r.ca / r.mg : null, caK: r.ca != null && r.k ? r.ca / r.k : null };
+    const cat = ['k', 'ca', 'mg', 'na'].reduce((t, x) => t + (r[x] || 0), 0), an = ['no3', 'so4', 'cl', 'hco3'].reduce((t, x) => t + (r[x] || 0), 0) + (num(v.co3) || 0);
+    const sar = r.na != null && r.ca != null && r.mg != null && r.ca + r.mg > 0 ? r.na / Math.sqrt((r.ca + r.mg) / 2) : null;
+    const dureza = num(v.ca) != null && num(v.mg) != null ? (num(v.ca) * 2.497 + num(v.mg) * 4.118) / 10 : null;
+    return { meq: r, sar, dureza, cat, an, balance: cat && an ? (cat - an) / (cat + an) * 100 : null, kMg: r.k != null && r.mg ? r.k / r.mg : null, caMg: r.ca != null && r.mg ? r.ca / r.mg : null, caK: r.ca != null && r.k ? r.ca / r.k : null };
   }
 
   /* ---------- Riego (pestaña 3) ---------- */
@@ -313,6 +344,6 @@
     return out;
   }
 
-  const api = { MESES, GRUPOS, TEXTURAS, CULTIVOS, NUTRIENTES, aportesAgua, edad, sumaReparto, necesidades, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
+  const api = { CLASES_TEXTURA, claseTextura, relCN, MESES, GRUPOS, TEXTURAS, CULTIVOS, NUTRIENTES, aportesAgua, edad, sumaReparto, necesidades, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CALC = api;
 })(typeof window !== 'undefined' ? window : globalThis);
