@@ -656,7 +656,7 @@
     const vb = [];
     for (const h of d.hojas) for (const v of h.verif) vb.push([h.corto, v.nu, n1(v.rec), v.lim == null ? '–' : `≤ ${n1(v.lim)} (${v.txtLim})`, n1(v.aport), v.ok == null ? 'SIN CÁLCULO' : v.ok ? 'CUMPLE' : 'NO CUMPLE']);
     y = tablaReg(o, { y, head: ['HOJA', 'NUTRIENTE', 'NECESIDAD', 'LÍMITE LEGAL (kg/ha)', 'APORTADO', 'RESULTADO'], body: vb, cols: cols([2, 4], { 0: { cellWidth: 16 }, 3: { halign: 'right' }, 5: { halign: 'center', cellWidth: 26 } }), fs: 7.8 }) + 3;
-    const moTxt = [d.estKg > 0 ? `estiércoles y enmiendas ${kg(d.estKg)} (${kg(d.estMS)} de materia seca)` : '', d.moKg > 0 ? `fertilizantes orgánicos sólidos ${kg(d.moKg)}` : ''].filter(Boolean).join('; ');
+    const moTxt = [d.estKg > 0 ? `estiércoles y enmiendas ${kg(d.estKg)}${d.estMS > 0 ? ` (${kg(d.estMS)} de materia seca)` : ''}` : '', d.moKg > 0 ? `fertilizantes orgánicos sólidos ${kg(d.moKg)}` : ''].filter(Boolean).join('; ');
     y = para('Aportes totales a la unidad de producción', `Fertilizantes: N ${kg(d.totUP[0])}; P₂O₅ ${kg(d.totUP[1])}; K₂O ${kg(d.totUP[2])}. Materia orgánica aportada: ${moTxt || '0 kg'}.`, y);
     y = para('Objetivo de materia orgánica (art. 4)', d.objetivoMO, y);
 

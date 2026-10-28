@@ -348,10 +348,11 @@ function datosHojaRD(p, campKey, n) {
     }
   });
   const textoMeses = (ms) => { ms.sort((a, b2) => a - b2); const r = []; let a = ms[0], z = ms[0]; for (const m of ms.slice(1).concat([null])) { if (m === z + 1) { z = m; continue; } r.push(a === z ? CALC.MESES[a].slice(0, 3) : `${CALC.MESES[a].slice(0, 3)}–${CALC.MESES[z].slice(0, 3)}`); a = z = m; } return r.join(', ').toLowerCase(); };
-  const estKg = b.est.reduce((t, e) => t + e.dosis * sup, 0), estMS = b.est.reduce((t, e) => t + e.dosis * e.ms / 100 * sup, 0);
+  const estKg = b.est.reduce((t, e) => t + e.dosis * sup, 0), estMS = b.est.reduce((t, e) => { const tp = CALC.TABLAS.estiercol.find((x) => CALC.norm(x.tipo) === CALC.norm(e.tipo)); return t + (tp && tp.humedo ? 0 : e.dosis * e.ms / 100 * sup); }, 0);
   const rec = [0, 1, 2].map((j) => nc.objetivo[j]);
   const lim = [rec[0] != null ? rec[0] * 1.2 : null, rec[1] != null ? rec[1] * 5 * 1.3 : null, rec[2] != null ? rec[2] * 5 * 1.2 : null];
   const verif = ['N', 'P₂O₅', 'K₂O'].map((nu, j) => ({ nu, rec: rec[j], lim: lim[j], txtLim: j === 0 ? 'necesidad + 20 %' : `5 años + ${j === 1 ? 30 : 20} %`, aport: anual[j], ok: lim[j] == null ? null : anual[j] <= lim[j] + 0.05 }));
+  if (p.vulnerable) { const lo = +db.config.limiteNOrganico || 170; verif.push({ nu: 'N orgánico', rec: null, lim: lo, txtLim: 'zona vulnerable', aport: b.nOrgTotal, ok: b.nOrgTotal <= lo + 0.05 }); }
   const nombreHoja = `Hoja ${n}: ${p.cultivo || p.tipoCultivo || 'cultivo'}${p.finca ? ' · ' + p.finca : ''}`;
   return {
     n, nombre: nombreHoja, corto: `Hoja ${n}`, plan: p.nombre, finca: p.finca || '', cultivo: p.cultivo || p.tipoCultivo || '', tipoCultivo: p.tipoCultivo || '', sup, arboles: p.arboles, anio: p.anioPlantacion,
@@ -363,6 +364,12 @@ function datosHojaRD(p, campKey, n) {
     productos: [...prods.values()].sort((a, b2) => a.meses[0] - b2.meses[0] || a.nombre.localeCompare(b2.nombre, 'es')).map((x) => ({ ...x, total: x.dosis * sup, cuando: textoMeses(x.meses.slice()) })),
     totUP: anual.map((v) => v * sup), estKg, estMS, moKg: mo, recintos: (p.sigpac || []).map((r) => ({ ...r, cultivo: p.cultivo || p.tipoCultivo || '' }))
   };
+}
+/* Programa de actuación de zonas vulnerables en vigor (Orden de 16 de junio de 2016, BORM nº 140) */
+function textoVulnerable(planes) {
+  const vs = planes.filter((p) => p.vulnerable); if (!vs.length) return '';
+  const ex = [...new Set(vs.map((p) => CALC.TABLAS.exclusion[p.grupo]).filter(Boolean).map((e) => e.txt))];
+  return ` En ${vs.length === planes.length ? 'la unidad de producción, situada' : 'las hojas situadas'} en zona vulnerable se aplica además el programa de actuación de la Región de Murcia (Orden de 16 de junio de 2016): no se aportará nitrógeno en los periodos de exclusión de su tabla 1${ex.length ? ' (' + ex.join('; ') + ')' : ''}; se fertirrigará al menos una vez por semana; los riegos no superarán 5 horas seguidas; ante previsión de lluvias de más de 15 mm/día se reajustarán riego y fertilización; el nitrógeno de origen orgánico no superará 170 kg N/ha y año; se dejarán 3 m sin abonar junto a cursos de agua y 50 m alrededor de pozos, fuentes y aljibes para consumo humano, y se hará una analítica de suelo al inicio de cada campaña (pH, CE, textura, materia orgánica, N total, nitratos y fósforo) y una de agua al menos cada dos años.`;
 }
 function faltasRD(cliente, planes, campKey) {
   const t = db.titulares[cliente] || {}, c = db.config.rd || {}, f = [];
@@ -399,7 +406,7 @@ function datosRD(cliente, planes, campKey) {
     precipitacion: c.precipitacion ? `${c.precipitacion} mm/año de media` : '', lluvia: rdTxt('lluvia'),
     metodo: RD_TXT.metodo, aplicacion: conf.aplicacion || TEXTO_APLICACION,
     totUP: [0, 1, 2].map((j) => hojas.reduce((s, h) => s + h.totUP[j], 0)), estKg: hojas.reduce((s, h) => s + h.estKg, 0), estMS: hojas.reduce((s, h) => s + h.estMS, 0), moKg: hojas.reduce((s, h) => s + h.moKg, 0),
-    objetivoMO: rdTxt('objetivoMO'), medidas: conf.medidas || TEXTO_MEDIDAS, prohibiciones: rdTxt('prohibiciones'), almacenamiento: rdTxt('almacenamiento'), proteccion: rdTxt('proteccion'), asesoramiento: rdTxt('asesoramiento'), cuaderno: rdTxt('cuaderno'),
+    objetivoMO: rdTxt('objetivoMO'), medidas: conf.medidas || TEXTO_MEDIDAS, prohibiciones: rdTxt('prohibiciones') + textoVulnerable(planes), almacenamiento: rdTxt('almacenamiento'), proteccion: rdTxt('proteccion'), asesoramiento: rdTxt('asesoramiento'), cuaderno: rdTxt('cuaderno'),
     autor: c.asesor || db.config.autor || '', recintos: hojas.flatMap((h) => h.recintos.map((r) => ({ ...r, hoja: h.corto })))
   };
 }

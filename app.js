@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.7.1';
+const APP_VERSION = '1.7.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1221,7 +1221,7 @@ function analiticasInforme(p, camp) {
   const porque = { suelo: 'Con ella ajustamos mejor el nitrógeno que aporta el suelo, la materia orgánica y el equilibrio de nutrientes.', agua: 'Con una analítica al día ajustamos mejor lo que aporta el agua, las sales y el ácido para los goteros.', estiercol: 'Conocer su riqueza real permite descontarlo bien del abonado.' };
   const nom = { suelo: 'suelo', agua: 'agua', estiercol: 'estiércol' };
   const revisar = (tipo, a) => {
-    const max = +T[tipo] || (tipo === 'suelo' ? 4 : tipo === 'agua' ? 2 : 1);
+    const max = CALC.maxAntiguedad(p, tipo, { antiguedad: T });
     if (a && a.origen === 'cartografia') { recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `Los datos de ${nom[tipo]} de esta finca son de la cartografía oficial de suelos, no de una analítica. ${porque[tipo]}` }); return; }
     if (!a || a.plantilla || !a.fecha) { recs.push({ titulo: `Recomendación: hacer una analítica de ${nom[tipo]}`, texto: `No tenemos una analítica de ${nom[tipo]} de esta finca. ${porque[tipo]}` }); return; }
     const e = CALC.edadAnios(a.fecha);

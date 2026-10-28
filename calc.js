@@ -39,13 +39,22 @@
       { tipo: 'Estiércol bovino', n: [1, 2], min: [50, 30, 20] },
       { tipo: 'Estiércol de oveja y cabra', n: [2, 2.5], min: [45, 25, 30] },
       { tipo: 'Estiércol porcino', n: [1.5, 2], min: [65, 20, 15] },
-      { tipo: 'Purines de porcino', n: [0.4, 0.4], min: [75, 15, 10], humedo: true },
+      { tipo: 'Purines de porcino', n: [0.42, 0.42], min: [75, 15, 10], humedo: true },
       { tipo: 'Gallinaza', n: [2, 5], min: [70, 15, 15] },
       { tipo: 'Estiércol conejo', n: [1.5, 2], min: [60, 30, 10] },
       { tipo: 'Lodos depuradora', n: [2, 7], min: [35, 35, 30] },
       { tipo: 'Compost sólidos urbanos', n: [1, 1.8], min: [40, 30, 30] }
     ],
     msDefecto: 60, // % de materia seca si no hay dato
+    // Orden de 16/06/2016 (programa de actuación de zonas vulnerables de la Región de Murcia), tabla 1: meses (0 = enero) sin abonado nitrogenado
+    exclusion: {
+      CITRICOS: { meses: [10, 11, 0], txt: 'cítricos, de noviembre a enero, salvo variedades sin recolectar con prescripción técnica' },
+      ALMENDRO: { meses: [10, 11, 0], txt: 'almendro, de noviembre a enero' },
+      OLIVOS: { meses: [10, 11, 0], txt: 'olivar, de noviembre a enero' },
+      FRUTALES: { meses: [11, 0], txt: 'frutales de hueso y pepita, de la caída de hoja al inicio de la brotación', aproximado: 'la app avisa en diciembre y enero' }
+    },
+    horasMaxRiego: 5, // riegos ininterrumpidos de más de 5 h prohibidos en zona vulnerable
+    sueloObligatorio: [['ph', 'pH'], ['ce', 'CE'], ['textura', 'textura'], ['mo', 'materia orgánica'], ['ntotal', 'N total'], ['no3', 'nitratos'], ['p', 'fósforo']],
     extraccion: [ // Tabla 5. Coeficiente de extracción (kg N/t)
       { cultivo: 'Albaricoque', r: [3.5, 5] }, { cultivo: 'Ciruelo', r: [3.5, 5] }, { cultivo: 'Melocotonero', r: [3, 4.5] },
       { cultivo: 'Frutal de pepita', r: [3, 4] }, { cultivo: 'Almendro (en cáscara)', r: [35, 45] }, { cultivo: 'Limonero', r: [4.8, 6] },
@@ -125,7 +134,7 @@
   }
   function fB(plan, T = TABLAS) {
     if (!GRUPOS.includes(plan.grupo)) return { valor: T.fB.resto, rango: null, txt: 'Resto de cultivos' };
-    const sep = Math.max(n0(plan.marco && plan.marco.filas), n0(plan.marco && plan.marco.arboles));
+    const sep = n0(plan.marco && plan.marco.filas) || n0(plan.marco && plan.marco.arboles); // separación entre filas de árboles (tabla 3 de la Orden)
     const lineas = n0(plan.lineas) >= 2 ? 2 : 1;
     const tramo = sep > 0 && sep < 5 ? 'menos5' : 'mas5';
     const r = T.fB.lenosos[tramo][lineas];
@@ -307,6 +316,11 @@
     if (isNaN(d)) return null;
     return (hoy - d) / (365.25 * 24 * 3600 * 1000);
   }
+  /* Años máximos de una analítica: en zona vulnerable, la de suelo es de cada campaña (Orden 16/06/2016) */
+  function maxAntiguedad(plan, tipo, T = TABLAS) {
+    const max = +((T.antiguedad && T.antiguedad[tipo]) || (tipo === 'suelo' ? 4 : tipo === 'agua' ? 2 : 1));
+    return plan && plan.vulnerable && tipo === 'suelo' ? Math.min(max, 1) : plan && plan.vulnerable && tipo === 'agua' ? Math.min(max, 2) : max;
+  }
   function avisos(plan, campKey, db, cfg = {}, hoy = new Date()) {
     const T = cfg.tablas || TABLAS;
     const out = [];
@@ -319,8 +333,9 @@
       if (a.plantilla) { add('alto', `Analítica de ${nombre} de plantilla (no es de esta finca)`, 'analiticas'); continue; }
       if (a.origen === 'cartografia') { add('bajo', `Suelo de cartografía (IMIDA): conviene una analítica de la finca`, 'analiticas'); continue; }
       const e = edadAnios(a.fecha, hoy);
-      const max = (T.antiguedad && T.antiguedad[tipo]) || 4;
-      if (e != null && e > max) add('medio', `Analítica de ${nombre} de hace ${String(Math.round(e * 10) / 10).replace('.', ',')} años (máx. ${max})`, 'analiticas');
+      const max = maxAntiguedad(plan, tipo, T);
+      if (e != null && e > max) add('medio', `Analítica de ${nombre} de hace ${String(Math.round(e * 10) / 10).replace('.', ',')} años (máx. ${max}${plan.vulnerable && tipo === 'suelo' ? ': en zona vulnerable, una al inicio de cada campaña' : ''})`, 'analiticas');
+      if (tipo === 'suelo' && plan.vulnerable) { const f = T.sueloObligatorio.filter(([k]) => (a.v || {})[k] == null || (a.v || {})[k] === '').map(([, t]) => t); if (f.length) add('bajo', `A la analítica de suelo le falta, para zona vulnerable: ${f.join(', ')}`, 'analiticas'); }
       const nueva = db.analiticas.find((x) => x.tipo === tipo && x.id !== a.id && !x.plantilla && x.origen !== 'cartografia' && x.fecha && a.fecha && x.fecha > a.fecha &&
         db.planes.some((p) => (tipo === 'suelo' ? p.analSuelo : p.analAgua) === x.id && p.id !== plan.id && p.carpeta && p.carpeta === plan.carpeta));
       if (nueva) add('medio', `Hay una analítica de ${nombre} más nueva en esta finca (${nueva.fecha})`, 'analiticas');
@@ -330,6 +345,14 @@
     const b = balanceN(plan, camp, anal, 'estimado', cfg);
     if (b.excede) add('alto', `N del plan ${r2(b.nAplicado, 1)} kg/ha supera el balance (${r2(b.aporte, 1)} kg/ha)`, 'balance');
     if (b.excedeOrg) add('alto', `N orgánico ${r2(b.nOrgTotal, 0)} kg/ha supera el límite de ${T.limiteNOrganico} kg/ha`, 'balance');
+    if (plan.vulnerable) {
+      const ex = T.exclusion && T.exclusion[plan.grupo];
+      const ufs = (cfg.ufDe && cfg.ufDe(plan, camp)) || camp.ufAplicadas || [];
+      const malM = ex ? ex.meses.filter((i) => n0(ufs[i] && ufs[i][0]) > 0.05) : [];
+      if (malM.length) add('alto', `N en periodo de exclusión (${malM.map((i) => MESES[i].toLowerCase()).join(', ')}): ${ex.txt}${ex.aproximado ? ' (' + ex.aproximado + ')' : ''}`, 'fert');
+      const largos = (camp.riego || []).map((m, i) => (m && n0(m.n) && n0(m.h) > (T.horasMaxRiego || 5) ? MESES[i].slice(0, 3).toLowerCase() : null)).filter(Boolean);
+      if (largos.length) add('medio', `Riegos de más de ${T.horasMaxRiego || 5} h seguidas (${largos.join(', ')}): prohibidos en zona vulnerable; pártelos en dos`, 'riego');
+    }
     if (!num(camp.produccionEst)) add('medio', 'Falta la producción estimada', 'balance');
     if (!num(camp.coefExtraccion)) add('medio', 'Falta el coeficiente de extracción', 'balance');
     if (camp.plantillaProd) add('bajo', 'Producción y coeficiente de plantilla (20 t/ha · 6 kg N/t): revísalos', 'balance');
@@ -344,6 +367,6 @@
     return out;
   }
 
-  const api = { CLASES_TEXTURA, claseTextura, relCN, MESES, GRUPOS, TEXTURAS, CULTIVOS, NUTRIENTES, aportesAgua, edad, sumaReparto, necesidades, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
+  const api = { maxAntiguedad, CLASES_TEXTURA, claseTextura, relCN, MESES, GRUPOS, TEXTURAS, CULTIVOS, NUTRIENTES, aportesAgua, edad, sumaReparto, necesidades, TABLAS, ETO_MULA, KC, DIAS, num, n0, medio, r2, norm, texturaTabla, texturaRiego, fA, fB, nHumus, suelo, agua, riego, balanceN, aportesEstiercol, avisos, edadAnios };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.CALC = api;
 })(typeof window !== 'undefined' ? window : globalThis);
