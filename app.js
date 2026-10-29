@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.7.3';
+const APP_VERSION = '1.8.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -39,7 +39,7 @@ function dbVacia() {
   return {
     version: 1, creado: new Date().toISOString(), guardado: null,
     config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' }, rd: { precipitacion: '', lluvia: '', asesor: '', registro: '', objetivoMO: '', prohibiciones: '', almacenamiento: '', proteccion: '', asesoramiento: '', cuaderno: '' } },
-    planes: [], analiticas: [], textos: {}, titulares: {}
+    planes: [], analiticas: [], textos: {}, titulares: {}, programas: []
   };
 }
 function migrar(d) {
@@ -51,7 +51,7 @@ function migrar(d) {
   d.config.pie = { ...v.config.pie, ...(d.config.pie || {}) };
   d.config.planAnual = { ...v.config.planAnual, ...(d.config.planAnual || {}) };
   d.config.rd = { ...v.config.rd, ...(d.config.rd || {}) };
-  d.textos = d.textos || {}; d.titulares = d.titulares || {};
+  d.textos = d.textos || {}; d.titulares = d.titulares || {}; d.programas = d.programas || [];
   d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
 }
@@ -1080,6 +1080,7 @@ function tabFert(el, p, camp) {
       ${ant ? `<button class="btn peq" id="fAnt">Copiar ${CALC.MESES[i].toLowerCase()} de ${esc(ant)}</button>` : ''}
       ${i > 0 && conLineas(i - 1) ? `<button class="btn peq" id="fPrev">Copiar de ${CALC.MESES[i - 1].toLowerCase()}</button>` : ''}
       <button class="btn peq" id="fOtro" title="Copiar productos y dosis de ${CALC.MESES[i].toLowerCase()} de otro plan">Copiar de otro plan</button>
+      <button class="btn peq" id="fProg" title="Cargar un programa tipo (productos, riegos, horas y calendario) o guardar este plan como programa">Programa tipo</button>
       <button class="btn peq p" id="fAjus" ${obj && m.lineas.length ? '' : 'disabled'}>Ajustar al objetivo</button>
       <button class="btn peq" id="fTq" ${m.lineas.some((l) => !l.tanqueAuto) ? '' : 'disabled'}>Tanques automáticos</button>
       <span class="spacer"></span><button class="btn peq rojo" id="fVac" ${m.lineas.length ? '' : 'disabled'}>Vaciar mes</button></div>
@@ -1135,6 +1136,7 @@ function tabFert(el, p, camp) {
   if ($('#fPrev', el)) $('#fPrev', el).onclick = () => { if (fm.lineas.length && !confirm('¿Sustituir los productos de este mes?')) return; guardarLineas((ls) => { ls.splice(0, ls.length, ...structuredClone(camp.fert[i - 1].lineas).map((l) => ({ ...l, riegos: /resto/i.test(l.periodo || '') ? (rg.n || l.riegos) : l.riegos }))); }); };
   $('#fTq', el).onclick = () => guardarLineas((ls) => ls.forEach((l) => { l.tanque = null; }));
   $('#fOtro', el).onclick = () => copiarDeOtroPlan(p, i, rg.n || 0, fm.lineas.length, guardarLineas);
+  $('#fProg', el).onclick = () => cargarPrograma(p, i);
   $('#fVac', el).onclick = () => { if (confirm(`¿Quitar todos los productos de ${CALC.MESES[i].toLowerCase()}?`)) guardarLineas((ls) => ls.splice(0, ls.length)); };
   $('#fAjus', el).onclick = () => {
     const r = FERT.ajustar(p, camp, i, ix, obj);
@@ -1755,6 +1757,7 @@ function renderAjustes(v) {
       <label class="fld"><span>Precipitación media anual (mm)</span><input data-rd="precipitacion" value="${esc((c.rd || {}).precipitacion || '')}" inputmode="decimal" placeholder="Zona de Mula"></label></div>
       ${[['lluvia', 'Reparto de la lluvia en el año'], ['objetivoMO', 'Objetivo de materia orgánica'], ['prohibiciones', 'Prohibiciones y precauciones'], ['almacenamiento', 'Almacenamiento'], ['proteccion', 'Protección de aguas y suelos'], ['asesoramiento', 'Asesoramiento técnico'], ['cuaderno', 'Cuaderno de explotación']].map(([k, l]) => `<label class="fld" style="margin-top:10px"><span>${l}</span><textarea data-rd="${k}" rows="3" placeholder="${esc(RD_TXT[k])}">${esc((c.rd || {})[k] || '')}</textarea></label>`).join('')}
       <p class="small muted">Forma de aplicación y medidas de emisiones: las del plan anual (arriba). Vacío = el texto de ejemplo en gris.</p></div>
+    ${htmlProgramasAjustes()}
     <div class="card"><h3>Copia de seguridad</h3><div class="row"><button class="btn" id="aExp">Descargar copia (.json)</button><label class="btn">Restaurar copia…<input type="file" id="aRes" accept=".json,application/json" hidden></label></div></div>
   </div>
   <div>
@@ -1801,6 +1804,7 @@ function renderAjustes(v) {
   $('#aLogo').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const url = await new Promise((ok) => { const r = new FileReader(); r.onload = () => ok(r.result); r.readAsDataURL(f); }); logoCache = url; commit((d) => { d.config.logo = url; }); toast('Logo guardado'); };
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
   $('#aPaApl').onchange = (e) => commit((d) => { d.config.planAnual.aplicacion = e.target.value.trim(); }, { render: false });
+  enlazarProgramasAjustes(v);
   $$('[data-rd]', v).forEach((i) => i.onchange = () => commit((d) => { d.config.rd = d.config.rd || {}; d.config.rd[i.dataset.rd] = i.value.trim(); }, { render: false }));
   $('#aPaMed').onchange = (e) => commit((d) => { d.config.planAnual.medidas = e.target.value.trim(); }, { render: false });
   $('#aPieT').onchange = (e) => commit((d) => { d.config.pie.texto = e.target.value.trim(); }, { render: false });
