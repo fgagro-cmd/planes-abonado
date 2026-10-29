@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.7.2';
+const APP_VERSION = '1.7.3';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -381,15 +381,36 @@ function renderDetalle(el) {
       <div class="kpi ${av.some((a) => a.nivel === 'alto') ? 'rojo' : ''}"><span>Avisos</span><strong>${av.length}</strong></div></div>`;
   }
   const nAv = (d) => av.filter((a) => a.donde === d).length;
+  // Otros planes del mismo cliente, para pasar de uno a otro sin volver a la lista
+  const herm = db.planes.filter((x) => (x.cliente || '') === (p.cliente || '')).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  let hermHtml = '';
+  if (herm.length > 1) {
+    const pal = herm.map((x) => x.nombre.split(/\s+/));
+    let comun = 0; while (pal.every((w) => w.length > comun + 1 && CALC.norm(w[comun]) === CALC.norm(pal[0][comun]))) comun++;
+    const corto = (x, k) => pal[k].slice(comun).join(' ') || x.nombre;
+    const k0 = herm.findIndex((x) => x.id === p.id);
+    hermHtml = `<div class="hermanos" aria-label="Planes de ${esc(p.cliente)}">
+      <button class="btn peq" data-herm="${herm[(k0 - 1 + herm.length) % herm.length].id}" title="Plan anterior de ${esc(p.cliente)}">‹</button>
+      ${herm.map((x, k) => `<button class="hp" data-herm="${x.id}" aria-current="${x.id === p.id}" title="${esc(x.nombre)} · ${esc(x.finca)}"><span class="dot ${nivelPlan(avisosDe(x))}"></span>${esc(corto(x, k))}</button>`).join('')}
+      <button class="btn peq" data-herm="${herm[(k0 + 1) % herm.length].id}" title="Plan siguiente de ${esc(p.cliente)}">›</button></div>`;
+  }
   const tabs = [['finca', 'Finca'], ['analiticas', 'Analíticas'], ['riego', 'Riego'], ['balance', 'Balance N'], ['necesidades', 'Necesidades y reparto'], ['fert', 'Fertirrigación']];
   el.innerHTML = `<div class="card ${ui.tab === 'fert' ? 'card-fert' : ''}"><div class="cab"><button class="btn peq solo-compacto" id="dLista" title="Volver a la lista de planes">‹ Planes</button><div class="t"><h2>${esc(p.nombre)}</h2>
       <div class="muted">${esc(p.cliente)} › ${esc(p.finca)} · ${esc(p.cultivo)} · ${fmt(p.superficie, 2)} ha · ${fmt(p.arboles, 0)} árboles</div>
-      <div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
+      ${hermHtml}<div class="row" style="margin-top:6px">${p.vulnerable ? '<span class="chip amb">Zona vulnerable</span>' : '<span class="chip">No vulnerable</span>'}<span class="chip">${esc(p.grupo)}</span>${p.tipoCultivo ? `<span class="chip v">${esc(p.tipoCultivo)}</span>` : '<span class="chip amb">Sin tipo de cultivo</span>'}${p.mxFin ? `<span class="chip v" title="Enlazado con el maestro de fincas">${esc(p.mxFin)}</span>` : ''}</div></div></div>
     ${camp ? kp : `<div class="aviso alto" style="margin-top:12px"><span>Este plan no tiene datos de la campaña <b>${esc(ui.camp)}</b>.</span><span class="spacer"></span>${Object.keys(p.campanas || {}).length ? `<button class="btn peq" id="dCrear">Crearla copiando de ${esc(Object.keys(p.campanas).sort().slice(-1)[0])}</button>` : `<button class="btn peq" id="dCrear">Crearla vacía</button>`}</div>`}
     ${av.length ? `<details style="margin-top:12px" ${av.some((a) => a.nivel === 'alto') && !compacto() ? 'open' : ''}><summary class="small muted" style="cursor:pointer">Ver avisos (${av.length})</summary><div style="margin-top:8px">${av.map((a) => `<div class="aviso ${a.nivel}"><span class="dot ${a.nivel}" style="margin-top:6px"></span><span>${esc(a.txt)}</span></div>`).join('')}</div></details>` : ''}
     <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${ui.tab === k}">${t}${nAv(k) ? `<span class="c">${nAv(k)}</span>` : ''}</button>`).join('')}</div>
     <div id="tabBody"></div></div>`;
   $$('[data-tab]', el).forEach((b) => { b.onclick = () => { ui.tab = b.dataset.tab; renderDetalle(el); }; });
+  $$('[data-herm]', el).forEach((b) => { b.onclick = () => {
+    if (b.dataset.herm === p.id) return;
+    const ws = window.scrollY, sc = $('#view') ? $('#view').scrollTop : 0;
+    ui.planId = b.dataset.herm; renderAll();
+    window.scrollTo(0, ws); if ($('#view')) $('#view').scrollTop = sc;
+    const it = $(`.item[data-plan="${ui.planId}"]`); if (it && it.scrollIntoView) it.scrollIntoView({ block: 'nearest' });
+    const act = $('.hermanos .hp[aria-current="true"]'); if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }; });
   $('#dLista', el).onclick = () => { ui.verLista = true; renderAll(); window.scrollTo(0, 0); };
   const dc = $('#dCrear', el); if (dc) dc.onclick = () => { commit(() => crearCampana(p, ui.camp)); toast('Campaña ' + ui.camp + ' creada'); };
   const body = $('#tabBody', el);
