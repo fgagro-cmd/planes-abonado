@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -63,6 +63,11 @@ const anal = (id) => (id ? db.analiticas.find((a) => a.id === id) || null : null
 const campDe = (p) => (p && p.campanas ? p.campanas[ui.camp] : null);
 function analDePlan(p) {
   return { suelo: anal(p.analSuelo), agua: anal(p.analAgua), estiercoles: Object.fromEntries(db.analiticas.filter((a) => a.tipo === 'estiercol').map((a) => [a.id, a])) };
+}
+/* Campaña con la que se abre la app: la elegida en Ajustes o, si no hay, la más reciente */
+function campanaInicio() {
+  const cs = campanas(), ini = db && db.config && db.config.campanaInicio;
+  return (ini && cs.includes(ini)) ? ini : (cs.slice(-1)[0] || String(new Date().getFullYear()));
 }
 function campanas() {
   const s = new Set(); for (const p of db.planes) for (const k of Object.keys(p.campanas || {})) s.add(k);
@@ -168,7 +173,7 @@ function postCarga() {
 }
 function prepararVista() {
   if (!db) return;
-  if (!ui.camp || !campanas().includes(ui.camp)) ui.camp = campanas().slice(-1)[0] || String(new Date().getFullYear());
+  if (!ui.camp || !campanas().includes(ui.camp)) ui.camp = campanaInicio();
   logoCache = db.config.logo || logoCache;
 }
 async function abrir() {
@@ -1737,6 +1742,7 @@ function renderAjustes(v) {
       <div class="row"><button class="btn" id="aOd">${od === 'listo' ? 'Cambiar de carpeta' : od === 'pedir-permiso' ? 'Conectar' : 'Elegir carpeta Asesoramiento agrícola'}</button><button class="btn p" id="aImp">Importar los Excels</button><button class="btn" id="aV10">Traer datos de la versión 1.0</button></div>`}</div>
     <div class="card"><h3>Campañas</h3>
       <p class="small">Campañas con datos: ${cs.map(esc).join(', ') || '–'}. Al crear una nueva se copian de la anterior el riego, la producción y los ajustes; el N del plan y los estiércoles empiezan vacíos.</p>
+      <label class="fld" style="margin:10px 0"><span>Campaña al abrir la app</span><select id="aCampIni" style="max-width:260px"><option value="">La más reciente${cs.length ? ' (' + esc(cs.slice(-1)[0]) + ')' : ''}</option>${cs.map((k) => `<option value="${esc(k)}" ${c.campanaInicio === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
       <button class="btn" id="aCamp">Crear la campaña ${sig} en todos los planes</button></div>
     <div class="card"><h3>Maestros (Drive › Apps › Maestros)</h3>
       <p class="small muted">La misma dirección y clave que en Ventas o Asesor. Sirve para enlazar cada plan con su cliente y finca del maestro (lo usará la marca de «enviado» en Asesor).</p>
@@ -1805,6 +1811,7 @@ function renderAjustes(v) {
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
   $('#aPaApl').onchange = (e) => commit((d) => { d.config.planAnual.aplicacion = e.target.value.trim(); }, { render: false });
   enlazarProgramasAjustes(v);
+  $('#aCampIni').onchange = (e) => { commit((d) => { d.config.campanaInicio = e.target.value; }, { render: false }); toast(e.target.value ? `La app se abrirá en la campaña ${e.target.value}` : 'La app se abrirá en la campaña más reciente'); };
   $$('[data-rd]', v).forEach((i) => i.onchange = () => commit((d) => { d.config.rd = d.config.rd || {}; d.config.rd[i.dataset.rd] = i.value.trim(); }, { render: false }));
   $('#aPaMed').onchange = (e) => commit((d) => { d.config.planAnual.medidas = e.target.value.trim(); }, { render: false });
   $('#aPieT').onchange = (e) => commit((d) => { d.config.pie.texto = e.target.value.trim(); }, { render: false });
@@ -1892,7 +1899,7 @@ async function abrirImportar() {
     }
     let res;
     commit((d) => { res = IMP.juntar(d, leidos, { sustituir: $('#iSust', m).checked, uid }); if (IX) for (const p of d.planes) if (!p.mxFin) enlazarPlan(p, false); if (logoCache && !d.config.logo) d.config.logo = logoCache; IMP.asegurarRepartos(d); asegurarFert(d); });
-    const camps = campanas(); if (!camps.includes(ui.camp)) ui.camp = camps.slice(-1)[0];
+    const camps = campanas(); if (!camps.includes(ui.camp)) ui.camp = campanaInicio();
     const plantillas = db.analiticas.filter((a) => a.plantilla);
     $('.cuerpo', m).innerHTML = `<h3>Importación terminada</h3><ul>
       <li>${plural(res.nuevos, 'plan nuevo', 'planes nuevos')}${res.sustituidos ? `, ${res.sustituidos} sustituidos` : ''}${res.saltados ? `, ${res.saltados} ya estaban (no se tocan)` : ''}.</li>
