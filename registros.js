@@ -7,7 +7,7 @@ const TIPOS_REG = [
   ['riego', 'Registro de riego', 'Días, nº de riegos, horas y m³/ha de cada mes, con el acumulado y la necesidad calculada.'],
   ['rd', 'Plan de abonado RD 1051', 'El plan oficial de cada unidad de producción, como el modelo del RD 1051/2022: un documento por cliente, con sus planes como hojas de cultivo, recintos SIGPAC, suelo, lluvia y riego, necesidades, productos, verificación de límites, medidas y firmas.'],
   ['plan', 'Plan de abonado anual (técnico)', 'El plan de la campaña: analíticas, balance de N, necesidades, reparto mensual, fertilizantes, forma de aplicación y medidas (RD 1051/2022).'],
-  ['pedidos', 'Productos para pedidos', 'Cantidad de cada producto en el intervalo, en total y por cliente.']
+  ['pedidos', 'Productos para pedidos', 'Un PDF por cliente con la cantidad de cada producto: por finca, cada sector (plan) con el subtotal de la finca, y el total del cliente. Por defecto, el mes siguiente (desde el día 15).']
 ];
 const TEXTO_APLICACION = 'Fertirrigación por riego localizado (goteo), con equipo de inyección en el cabezal de riego y depósitos separados según la compatibilidad de los productos.';
 const TEXTO_MEDIDAS = 'Aplicación localizada y fraccionada a lo largo de la campaña según las necesidades del cultivo; fertilizantes disueltos en el agua de riego, sin aplicación sobre la superficie del suelo; dosis ajustadas al balance de nitrógeno y a las analíticas de suelo y agua; uso preferente de formas nítricas frente a la urea y las formas amoniacales.';
@@ -110,21 +110,40 @@ function datosPlanAnual(p, campKey) {
     riego: `${fmt(r.totApl, 0)} m³/ha previstos en la campaña (${r.filas.reduce((t, f) => t + (f.n || 0), 0)} riegos), riego localizado por goteo; la necesidad se calcula con la ETo de la zona y el Kc del cultivo.`
   };
 }
-function datosPedidos(planes, meses) {
-  const ix = ixProd(), porProd = new Map(), porCli = new Map();
-  const suma = (map, nom, u, k, v) => { const t = map.get(nom) || { nombre: nom, u, total: 0, porMes: meses.map(() => 0) }; t.total += v; t.porMes[k] += v; map.set(nom, t); };
-  for (const p of planes) {
-    const sup = +p.superficie || 0, cli = p.cliente || 'Sin cliente';
-    if (!porCli.has(cli)) porCli.set(cli, { cliente: cli, planes: new Set(), prods: new Map() });
-    const c = porCli.get(cli);
-    meses.forEach((x, k) => {
-      const camp = p.campanas && p.campanas[x.camp]; if (!camp) return;
-      for (const l of FERT.mes(p, camp, x.i, ix).lineas) { const v = l.w * sup; if (!(v > 0)) continue; const nom = l.prod ? l.prod.nombre : l.nombre, u = l.liquido ? 'L' : 'kg'; suma(porProd, nom, u, k, v); suma(c.prods, nom, u, k, v); c.planes.add(p.nombre); }
-    });
-  }
-  const ord = (m) => [...m.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
-  return { meses: meses.map((x) => `${CALC.MESES[x.i].slice(0, 3)} ${String(x.camp).slice(2)}`), porProducto: ord(porProd),
-    porCliente: [...porCli.values()].filter((c) => c.prods.size).sort((a, b) => a.cliente.localeCompare(b.cliente, 'es')).map((c) => ({ cliente: c.cliente, planes: plural(c.planes.size, 'plan', 'planes'), productos: ord(c.prods) })) };
+/* Productos para pedidos de UN cliente: por finca, cada plan es un sector, con subtotal por finca y total del cliente */
+function datosPedidosCliente(cliente, planes, meses) {
+  const ix = ixProd();
+  // Nombre corto del sector: sin las palabras que se repiten en todos los planes del cliente
+  const pal = planes.map((p) => p.nombre.split(/\s+/));
+  let comun = 0; while (pal.length > 1 && pal.every((w) => w.length > comun + 1 && CALC.norm(w[comun]) === CALC.norm(pal[0][comun]))) comun++;
+  const corto = (k) => pal[k].slice(comun).join(' ') || planes[k].nombre;
+  const fincas = new Map();
+  planes.forEach((p, k) => {
+    const fk = p.finca || 'Sin finca';
+    if (!fincas.has(fk)) fincas.set(fk, { finca: fk, sectores: [], prods: new Map(), sup: 0 });
+    const f = fincas.get(fk), s = f.sectores.length, sup = +p.superficie || 0;
+    f.sectores.push({ nombre: corto(k), plan: p.nombre, sup, cultivo: p.cultivo || p.tipoCultivo || '' }); f.sup += sup;
+    for (const x of meses) {
+      const camp = p.campanas && p.campanas[x.camp]; if (!camp) continue;
+      for (const l of FERT.mes(p, camp, x.i, ix).lineas) {
+        const v = l.w * sup; if (!(v > 0)) continue;
+        const nom = l.prod ? l.prod.nombre : l.nombre, u = l.liquido ? 'L' : 'kg', key = nom + '|' + u;
+        const t = f.prods.get(key) || { nombre: nom, u, porSector: [], subtotal: 0 };
+        t.porSector[s] = (t.porSector[s] || 0) + v; t.subtotal += v; f.prods.set(key, t);
+      }
+    }
+  });
+  const ord = (a, b) => a.nombre.localeCompare(b.nombre, 'es');
+  const lista = [...fincas.values()].sort((a, b) => a.finca.localeCompare(b.finca, 'es')).map((f) => ({ finca: f.finca, sup: f.sup, sectores: f.sectores, productos: [...f.prods.values()].map((t) => ({ ...t, porSector: f.sectores.map((_, s) => t.porSector[s] || 0) })).sort(ord) }));
+  const tot = new Map();
+  lista.forEach((f, fi) => { for (const t of f.productos) { const key = t.nombre + '|' + t.u; const x = tot.get(key) || { nombre: t.nombre, u: t.u, porFinca: lista.map(() => 0), total: 0 }; x.porFinca[fi] += t.subtotal; x.total += t.subtotal; tot.set(key, x); } });
+  return { cliente, fincas: lista, total: [...tot.values()].sort(ord), nPlanes: planes.length };
+}
+/* Mes por defecto del pedido: el siguiente a partir del día 15; antes, el mes en curso */
+function mesPedidoDefecto(hoy = new Date()) {
+  let m = hoy.getMonth(), a = hoy.getFullYear();
+  if (hoy.getDate() >= 15) { m++; if (m > 11) { m = 0; a++; } }
+  return { m, c: String(a) };
 }
 
 /* ---------- Pantalla ---------- */
@@ -148,7 +167,7 @@ function renderRegistros(v) {
   const elegidos = planes.filter((p) => r.sel[p.id]);
   const meses = mesesIntervalo(r);
   const selMes = (id, val) => `<select class="cell izq" id="${id}" style="width:auto">${CALC.MESES.map((m, k) => `<option value="${k}" ${+val === k ? 'selected' : ''}>${m}</option>`).join('')}</select>`;
-  const selCamp = (id, val) => `<select class="cell izq" id="${id}" style="width:auto">${(cs.length ? cs : [val]).map((c) => `<option ${String(val) === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+  const selCamp = (id, val) => `<select class="cell izq" id="${id}" style="width:auto">${(cs.includes(String(val)) ? cs : [...cs, String(val)].sort()).map((c) => `<option ${String(val) === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
   const t = TIPOS_REG.find((x) => x[0] === r.tipo);
   v.innerHTML = `<div class="card"><h2>Registros e informes de la campaña</h2>
     <p class="small muted" style="margin:2px 0 12px">Documentos para el cuaderno de explotación y el RD 1051/2022 de nutrición sostenible, a partir de lo planificado en cada plan.</p>
@@ -161,13 +180,15 @@ function renderRegistros(v) {
         ${r.tipo === 'fert' || r.tipo === 'riego' || r.tipo === 'plan' ? `<h3 style="margin-top:14px">Agrupar</h3><div class="filtros"><button data-ra="plan" aria-pressed="${r.agrupar === 'plan'}">Un PDF por plan</button><button data-ra="cliente" aria-pressed="${r.agrupar === 'cliente'}">Un PDF por cliente</button></div>` : ''}
         ${od !== 'no-disponible' ? `<label class="chk small" style="margin-top:12px"><input type="checkbox" id="rGu" ${r.guardar ? 'checked' : ''}> Guardar en OneDrive (${r.tipo === 'pedidos' ? 'carpeta Planes de abonado' : 'carpeta de cada cliente'})</label>` : '<p class="small muted" style="margin-top:12px">En la tablet los PDF se abren aquí y quedan en Drive; el ordenador los pasa a OneDrive.</p>'}
         ${r.tipo === 'rd' ? `<p class="small muted" style="margin-top:10px">Un PDF por cliente (unidad de producción); cada plan elegido es una hoja de cultivo.</p>${faltasHtml(elegidos, r.desdeC)}` : ''}
-        <div class="row" style="margin-top:14px"><button class="btn p" id="rGen" ${elegidos.length && (meses.length || r.tipo === 'plan' || r.tipo === 'rd') ? '' : 'disabled'}>Generar ${r.tipo === 'pedidos' ? 'PDF' : r.tipo === 'rd' ? 'PDF por cliente' : 'PDF' + (r.agrupar === 'cliente' ? ' por cliente' : ' por plan')}</button><span class="small muted">${plural(elegidos.length, 'plan elegido', 'planes elegidos')}</span></div>
+        <div class="row" style="margin-top:14px"><button class="btn p" id="rGen" ${elegidos.length && (meses.length || r.tipo === 'plan' || r.tipo === 'rd') ? '' : 'disabled'}>Generar ${r.tipo === 'pedidos' ? 'PDF por cliente' : r.tipo === 'rd' ? 'PDF por cliente' : 'PDF' + (r.agrupar === 'cliente' ? ' por cliente' : ' por plan')}</button><span class="small muted">${plural(elegidos.length, 'plan elegido', 'planes elegidos')}</span></div>
         <div id="rRes" style="margin-top:12px">${regResultados.length ? `<h3>Generados</h3>${regResultados.map((x, k) => `<div class="row small" style="margin:4px 0"><span style="flex:1">${esc(x.nombre)}${x.ruta ? ` <span class="chip v">${esc(x.ruta)}</span>` : x.pendiente ? ' <span class="chip amb">en Drive</span>' : ''}</span><button class="btn peq" data-rver="${k}">Ver</button></div>`).join('')}` : ''}</div></div>
       <div><h3>Planes</h3>
         <div class="row"><select class="cell izq" id="rCli" style="flex:1"><option value="">Todos los clientes</option>${clientes.map((c) => `<option ${r.cli === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select><button class="btn peq" id="rTodos">Marcar todos</button><button class="btn peq" id="rNing">Ninguno</button></div>
         <div class="lista-imp" style="margin-top:8px;max-height:52vh">${planes.map((p) => `<label><input type="checkbox" data-rp="${p.id}" ${r.sel[p.id] ? 'checked' : ''}> ${esc(p.nombre)} <span class="muted small">${esc(p.cliente)} · ${esc(p.finca)}</span></label>`).join('') || '<p class="muted small" style="padding:8px">Sin planes.</p>'}</div></div></div></div>`;
   const re = () => renderRegistros(v);
-  $$('[data-rt]', v).forEach((b) => { b.onclick = () => { r.tipo = b.dataset.rt; re(); }; });
+  $$('[data-rt]', v).forEach((b) => { b.onclick = () => {
+    if (b.dataset.rt === 'pedidos' && r.tipo !== 'pedidos') { const d = mesPedidoDefecto(); r.desdeM = r.hastaM = d.m; r.desdeC = r.hastaC = d.c; }
+    r.tipo = b.dataset.rt; re(); }; });
   $$('[data-ra]', v).forEach((b) => { b.onclick = () => { r.agrupar = b.dataset.ra; re(); }; });
   [['rDM', 'desdeM'], ['rDC', 'desdeC'], ['rHM', 'hastaM'], ['rHC', 'hastaC']].forEach(([id, k]) => { const e = $('#' + id, v); if (e) e.onchange = () => { r[k] = e.value; re(); }; });
   if ($('#rGu', v)) $('#rGu', v).onchange = (e) => { r.guardar = e.target.checked; };
@@ -191,7 +212,14 @@ async function generarRegistros(planes, meses) {
   if (r.tipo === 'riego') for (const g of grupos) docs.push({ nombre: `Registro riego ${g.nombre} ${sufijo}.pdf`, carpeta: g.carpeta, blob: PDF.registroRiego({ ...base, titulo: `Registro de riego · ${g.nombre}`, intervalo: interv, planes: g.planes.map((p) => datosRegRiego(p, meses)) }) });
   if (r.tipo === 'plan') for (const g of grupos) { const ds = g.planes.map((p) => datosPlanAnual(p, r.desdeC)).filter(Boolean); if (ds.length) docs.push({ nombre: `Plan de abonado ${g.nombre} ${r.desdeC}.pdf`, carpeta: g.carpeta, blob: PDF.planAnual({ ...base, campana: r.desdeC, planes: ds }) }); }
   if (r.tipo === 'rd') for (const g of grupos) { const d = datosRD(g.nombre, g.planes, r.desdeC); if (d) docs.push({ nombre: `Plan de abonado RD 1051 ${g.nombre} ${r.desdeC}.pdf`, carpeta: g.carpeta, blob: PDF.planRD({ ...base, ...d }) }); }
-  if (r.tipo === 'pedidos') docs.push({ nombre: `Productos para pedidos ${sufijo}.pdf`, raiz: CARPETA_INFORMES, blob: PDF.pedidos({ ...base, intervalo: interv, ...datosPedidos(planes, meses) }) });
+  if (r.tipo === 'pedidos') {
+    const porCli = planes.reduce((m, p) => { const k = p.cliente || 'Sin cliente'; (m.get(k) || m.set(k, []).get(k)).push(p); return m; }, new Map());
+    for (const [cli, ps] of [...porCli.entries()].sort((a, b) => a[0].localeCompare(b[0], 'es'))) {
+      const d = datosPedidosCliente(cli, ps.sort((a, b) => (a.finca || '').localeCompare(b.finca || '', 'es') || a.nombre.localeCompare(b.nombre, 'es')), meses);
+      if (!d.total.length) continue;
+      docs.push({ nombre: `Pedido ${cli} ${sufijo}.pdf`, raiz: CARPETA_INFORMES, blob: PDF.pedidos({ ...base, intervalo: interv, ...d }) });
+    }
+  }
   if (!docs.length) { toast('No hay datos para ese intervalo', true); return; }
   if (od === 'pedir-permiso' && r.guardar) { if (await ALM.reconectar().catch(() => false)) od = 'listo'; }
   regResultados = [];

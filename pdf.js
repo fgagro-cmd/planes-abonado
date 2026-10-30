@@ -569,22 +569,36 @@
     return doc.output('blob');
   }
 
-  /* d = { intervalo, logo, meses:[etiq], porProducto:[{nombre, u, total, porMes[]}], porCliente:[{cliente, planes, productos:[{nombre, u, total, porMes[]}]}] } */
+  /* Productos para pedidos de un cliente.
+     d = { intervalo, logo, cliente, nPlanes, fincas:[{ finca, sup, sectores:[{nombre, plan, sup, cultivo}], productos:[{nombre, u, porSector[], subtotal}] }], total:[{nombre, u, porFinca[], total}] } */
   function pedidos(d) {
     const o = docReg(true), { doc, K } = o;
-    const conMeses = d.meses.length > 1 && d.meses.length <= 6;
-    let y = cabReg(o, 'Productos para pedidos', d.intervalo, d.logo);
-    const fila = (p) => [p.nombre, ...(conMeses ? p.porMes.map((v) => (v ? n1(v) : '–')) : []), `${n1(p.total)} ${p.u}`];
-    const cols = { 0: { cellWidth: 70 }, ...Object.fromEntries((conMeses ? d.meses : []).map((_, k) => [k + 1, { halign: 'right' }])), [(conMeses ? d.meses.length : 0) + 1]: { halign: 'right', fontStyle: 'bold' } };
-    const head = ['PRODUCTO', ...(conMeses ? d.meses.map((m) => m.toUpperCase()) : []), 'TOTAL'];
-    K.titulo('Total de todos los clientes', M, y + 2); y += 4;
-    y = tablaReg(o, { y, head, body: d.porProducto.map(fila), cols }) + 8;
-    for (const c of d.porCliente) {
-      if (y > o.PH - 40) { doc.addPage(); y = 20; }
-      K.titulo(`${c.cliente} · ${c.planes}`, M, y + 2); y += 4;
-      y = tablaReg(o, { y, head, body: c.productos.map(fila), cols }) + 7;
+    const q = (v, u) => (v > 0 ? `${n1(v)} ${u}` : '–');
+    const MAXCOL = 7;
+    let y = cabReg(o, `Productos para pedidos · ${d.cliente}`, d.intervalo, d.logo);
+    K.t(`${d.fincas.length} ${d.fincas.length === 1 ? 'finca' : 'fincas'} · ${d.nPlanes} ${d.nPlanes === 1 ? 'sector' : 'sectores'}`, M, y + 1, { s: 8, c: C.gris }); y += 6;
+    for (const f of d.fincas) {
+      if (y > o.PH - 45) { doc.addPage(); y = 20; }
+      K.titulo(`${f.finca} · ${f.sectores.length} ${f.sectores.length === 1 ? 'sector' : 'sectores'} · ${num(f.sup, 2)} ha`, M, y + 2); y += 4;
+      if (!f.productos.length) { K.t('Sin productos en el intervalo.', M, y + 4, { s: 8, c: C.gris }); y += 10; continue; }
+      if (f.sectores.length <= MAXCOL) {
+        const head = ['PRODUCTO', ...f.sectores.map((s) => s.nombre.toUpperCase()), 'SUBTOTAL FINCA'];
+        const cols = { 0: { cellWidth: 62 }, ...Object.fromEntries(f.sectores.map((_, k) => [k + 1, { halign: 'right' }])), [f.sectores.length + 1]: { halign: 'right', fontStyle: 'bold', cellWidth: 32 } };
+        y = tablaReg(o, { y, head, cols, fs: 7.8, body: f.productos.map((t) => [t.nombre, ...t.porSector.map((v) => q(v, t.u)), q(t.subtotal, t.u)]) }) + 7;
+      } else { // muchos sectores: uno debajo de otro y el subtotal de la finca al final
+        const body = [], sub = [];
+        f.sectores.forEach((s, k) => { const ps = f.productos.filter((t) => t.porSector[k] > 0); if (!ps.length) return; sub.push(body.length); body.push([s.nombre, '']); for (const t of ps) body.push([`   ${t.nombre}`, q(t.porSector[k], t.u)]); });
+        sub.push(body.length); body.push([`Subtotal ${f.finca}`, '']); for (const t of f.productos) body.push([`   ${t.nombre}`, q(t.subtotal, t.u)]);
+        y = tablaReg(o, { y, head: ['SECTOR / PRODUCTO', 'CANTIDAD'], body, sub, cols: { 0: { cellWidth: 120 }, 1: { halign: 'right' } }, fs: 7.8 }) + 7;
+      }
     }
-    pieReg(o, `Productos para pedidos · ${d.intervalo}`);
+    if (y > o.PH - 45) { doc.addPage(); y = 20; }
+    K.titulo(`Total ${d.cliente}`, M, y + 2); y += 4;
+    const varias = d.fincas.length > 1 && d.fincas.length <= MAXCOL;
+    const head = ['PRODUCTO', ...(varias ? d.fincas.map((f) => f.finca.toUpperCase()) : []), 'TOTAL'];
+    const cols = { 0: { cellWidth: 62 }, ...Object.fromEntries((varias ? d.fincas : []).map((_, k) => [k + 1, { halign: 'right' }])), [(varias ? d.fincas.length : 0) + 1]: { halign: 'right', fontStyle: 'bold', cellWidth: 32 } };
+    tablaReg(o, { y, head, cols, fs: 8, body: d.total.map((t) => [t.nombre, ...(varias ? t.porFinca.map((v) => q(v, t.u)) : []), q(t.total, t.u)]) });
+    pieReg(o, `Productos para pedidos · ${d.cliente} · ${d.intervalo}`);
     return doc.output('blob');
   }
 
