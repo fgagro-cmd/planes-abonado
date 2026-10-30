@@ -303,3 +303,9 @@ table.fert td.tot-mes { background: var(--brand-soft); }
 .hermanos .hp[aria-current="true"] { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-soft); font-weight: 600; }
 .hermanos .hp .dot { width: 7px; height: 7px; }
 .hermanos .btn.peq { flex: none; padding: 2px 9px; }
+
+/* 1.8.4: cabeceras numéricas alineadas a la derecha como sus valores; tabla de objetivo y plan con columnas iguales */
+table.t th.n { text-align: right; }
+table.obj { table-layout: fixed; }
+table.obj th:first-child, table.obj td:first-child { width: 130px; }
+table.obj tr.pct td { border-bottom: 0; padding-top: 0; }

@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.8.3';
+const APP_VERSION = '1.8.4';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1069,7 +1069,8 @@ function tabFert(el, p, camp) {
   const celObj = (j) => { const o = obj ? obj[j] : null, a = m.uf[j]; const pc = o ? a / o * 100 : null; const ok = o == null || (!o && !a) ? '' : (o && Math.abs(a - o) / o <= 0.1) || (!o && a < 0.5) ? 'v' : 'amb'; return { o, a, pc, ok }; };
   const comp = `<table class="t obj"><tr><th>kg UF/ha</th>${NUT_TXT.map((nu) => `<th class="n">${nu}</th>`).join('')}</tr>
     <tr><td class="muted">Objetivo</td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n">${c.o == null ? '–' : fmt(c.o, 1)}</td>`; }).join('')}</tr>
-    <tr><td><b>Plan</b></td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n"><b>${fmt(c.a, 1)}</b>${c.pc == null ? '' : ` <span class="chip ${c.ok}">${fmt(c.pc, 0)} %</span>`}</td>`; }).join('')}</tr></table>`;
+    <tr><td><b>Plan</b></td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n"><b>${fmt(c.a, 1)}</b></td>`; }).join('')}</tr>
+    ${NUT_TXT.some((_, j) => celObj(j).pc != null) ? `<tr class="pct"><td class="muted small">% del objetivo</td>${NUT_TXT.map((_, j) => { const c = celObj(j); return `<td class="n">${c.pc == null ? '' : `<span class="chip ${c.ok}">${fmt(c.pc, 0)} %</span>`}</td>`; }).join('')}</tr>` : ''}</table>`;
   // Totales por producto: del mes y de la campaña
   const sup = +p.superficie || 0;
   const totCamp = new Map();

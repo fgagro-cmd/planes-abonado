@@ -569,36 +569,67 @@
     return doc.output('blob');
   }
 
-  /* Productos para pedidos de un cliente.
+  /* Hoja de pedido de un cliente (estilo de la hoja de pedido de Francis con los colores de la app).
      d = { intervalo, logo, cliente, nPlanes, fincas:[{ finca, sup, sectores:[{nombre, plan, sup, cultivo}], productos:[{nombre, u, porSector[], subtotal}] }], total:[{nombre, u, porFinca[], total}] } */
   function pedidos(d) {
-    const o = docReg(true), { doc, K } = o;
-    const q = (v, u) => (v > 0 ? `${n1(v)} ${u}` : '–');
-    const MAXCOL = 7;
-    let y = cabReg(o, `Productos para pedidos · ${d.cliente}`, d.intervalo, d.logo);
-    K.t(`${d.fincas.length} ${d.fincas.length === 1 ? 'finca' : 'fincas'} · ${d.nPlanes} ${d.nPlanes === 1 ? 'sector' : 'sectores'}`, M, y + 1, { s: 8, c: C.gris }); y += 6;
+    const o = docReg(false), { doc, K } = o, FIN = o.PH - 16, GAP = 5, CW = (o.AW - GAP) / 2, RH = 6.2, HH = 7.4;
+    const q = (v, u) => `${n1(v)} ${u}`;
+    let y = cabReg(o, 'Hoja de pedido · abonado', d.intervalo, d.logo);
+    K.t('Cliente:', M, y + 3, { f: 'b', s: 9.4 }); K.t(d.cliente, M + K.ancho('Cliente: ', 'b', 9.4), y + 3, { s: 9.4 });
+    K.t(`${d.fincas.length} ${d.fincas.length === 1 ? 'finca' : 'fincas'} · ${d.nPlanes} ${d.nPlanes === 1 ? 'sector' : 'sectores'}`, o.R, y + 3, { s: 7.8, c: C.gris, al: 'right' });
+    y += 8;
+    const salto = (h) => { if (y + h > FIN) { doc.addPage(); y = 16; } };
+    const banda = (txt, fill, color, sub = '') => {
+      salto(9 + RH * 2);
+      K.caja(M, y, o.AW, 8, fill, 1.6);
+      K.t(txt.toUpperCase(), M + 3.2, y + 5.4, { f: 'b', s: 9, c: color, cs: 0.3 });
+      if (sub) K.t(sub, o.R - 3.2, y + 5.4, { s: 7.8, c: color, al: 'right' });
+      y += 10;
+    };
+    const casilla = (x, yy) => { doc.setDrawColor(...C.gris); doc.setLineWidth(0.3); doc.rect(x, yy - 2.9, 3.2, 3.2, 'S'); };
+    const tarjeta = (x, yy, s, filas) => {
+      const h = HH + filas.length * RH + 1.2;
+      K.caja(x, yy, CW, h, [255, 255, 255], 1.8, C.borde);
+      doc.setFillColor(...C.t1); doc.roundedRect(x, yy, CW, HH, 1.8, 1.8, 'F'); doc.rect(x, yy + HH - 2, CW, 2, 'F');
+      const nom = K.lineas(s.nombre, CW - 30, 'b', 8.4)[0];
+      K.t(nom, x + 2.6, yy + 4.9, { f: 'b', s: 8.4, c: C.verde });
+      K.t(`${num(s.sup, 2)} ha`, x + CW - 2.6, yy + 4.9, { s: 7.6, c: C.gris, al: 'right' });
+      filas.forEach((t, k) => {
+        const yr = yy + HH + k * RH;
+        if (k % 2 === 0) { doc.setFillColor(...C.claro); doc.rect(x + 0.3, yr, CW - 0.6, RH, 'F'); }
+        casilla(x + 2.6, yr + 4.3);
+        K.t(K.lineas(t.nombre, CW - 38, 'n', 8)[0], x + 8, yr + 4.2, { s: 8 });
+        K.t(q(t.v, t.u), x + CW - 2.6, yr + 4.2, { f: 'b', s: 8, al: 'right' });
+      });
+      return h;
+    };
+    const lista2 = (items, fillPar, txtC) => { // lista de productos en dos columnas
+      const mitad = Math.ceil(items.length / 2), cols = [items.slice(0, mitad), items.slice(mitad)];
+      for (let k = 0; k < mitad; k++) {
+        salto(RH);
+        if (k % 2 === 0) { doc.setFillColor(...fillPar); doc.rect(M, y, CW, RH, 'F'); doc.rect(M + CW + GAP, y, CW, RH, 'F'); }
+        cols.forEach((c, ci) => { const t = c[k]; if (!t) return; const x = M + ci * (CW + GAP); K.t(K.lineas(t.nombre, CW - 34, 'n', 8.2)[0], x + 2.6, y + 4.2, { s: 8.2 }); K.t(q(t.v, t.u), x + CW - 2.6, y + 4.2, { f: 'b', s: 8.2, al: 'right', c: txtC }); });
+        y += RH;
+      }
+      y += 5;
+    };
     for (const f of d.fincas) {
-      if (y > o.PH - 45) { doc.addPage(); y = 20; }
-      K.titulo(`${f.finca} · ${f.sectores.length} ${f.sectores.length === 1 ? 'sector' : 'sectores'} · ${num(f.sup, 2)} ha`, M, y + 2); y += 4;
-      if (!f.productos.length) { K.t('Sin productos en el intervalo.', M, y + 4, { s: 8, c: C.gris }); y += 10; continue; }
-      if (f.sectores.length <= MAXCOL) {
-        const head = ['PRODUCTO', ...f.sectores.map((s) => s.nombre.toUpperCase()), 'SUBTOTAL FINCA'];
-        const cols = { 0: { cellWidth: 62 }, ...Object.fromEntries(f.sectores.map((_, k) => [k + 1, { halign: 'right' }])), [f.sectores.length + 1]: { halign: 'right', fontStyle: 'bold', cellWidth: 32 } };
-        y = tablaReg(o, { y, head, cols, fs: 7.8, body: f.productos.map((t) => [t.nombre, ...t.porSector.map((v) => q(v, t.u)), q(t.subtotal, t.u)]) }) + 7;
-      } else { // muchos sectores: uno debajo de otro y el subtotal de la finca al final
-        const body = [], sub = [];
-        f.sectores.forEach((s, k) => { const ps = f.productos.filter((t) => t.porSector[k] > 0); if (!ps.length) return; sub.push(body.length); body.push([s.nombre, '']); for (const t of ps) body.push([`   ${t.nombre}`, q(t.porSector[k], t.u)]); });
-        sub.push(body.length); body.push([`Subtotal ${f.finca}`, '']); for (const t of f.productos) body.push([`   ${t.nombre}`, q(t.subtotal, t.u)]);
-        y = tablaReg(o, { y, head: ['SECTOR / PRODUCTO', 'CANTIDAD'], body, sub, cols: { 0: { cellWidth: 120 }, 1: { halign: 'right' } }, fs: 7.8 }) + 7;
+      banda(f.finca, C.verde, [255, 255, 255], `${f.sectores.length} ${f.sectores.length === 1 ? 'sector' : 'sectores'} · ${num(f.sup, 2)} ha`);
+      const cards = f.sectores.map((s, k) => ({ s, filas: f.productos.filter((t) => t.porSector[k] > 0).map((t) => ({ nombre: t.nombre, u: t.u, v: t.porSector[k] })) })).filter((c) => c.filas.length);
+      for (let k = 0; k < cards.length; k += 2) {
+        const par = cards.slice(k, k + 2), h = Math.max(...par.map((c) => HH + c.filas.length * RH + 1.2));
+        salto(h);
+        par.forEach((c, ci) => tarjeta(M + ci * (CW + GAP), y, c.s, c.filas));
+        y += h + 4;
+      }
+      if (d.fincas.length > 1 || f.sectores.length > 1) {
+        banda(`Subtotal ${f.finca}`, C.azulD, [255, 255, 255]);
+        lista2(f.productos.map((t) => ({ nombre: t.nombre, u: t.u, v: t.subtotal })), C.azulF, C.azulT);
       }
     }
-    if (y > o.PH - 45) { doc.addPage(); y = 20; }
-    K.titulo(`Total ${d.cliente}`, M, y + 2); y += 4;
-    const varias = d.fincas.length > 1 && d.fincas.length <= MAXCOL;
-    const head = ['PRODUCTO', ...(varias ? d.fincas.map((f) => f.finca.toUpperCase()) : []), 'TOTAL'];
-    const cols = { 0: { cellWidth: 62 }, ...Object.fromEntries((varias ? d.fincas : []).map((_, k) => [k + 1, { halign: 'right' }])), [(varias ? d.fincas.length : 0) + 1]: { halign: 'right', fontStyle: 'bold', cellWidth: 32 } };
-    tablaReg(o, { y, head, cols, fs: 8, body: d.total.map((t) => [t.nombre, ...(varias ? t.porFinca.map((v) => q(v, t.u)) : []), q(t.total, t.u)]) });
-    pieReg(o, `Productos para pedidos · ${d.cliente} · ${d.intervalo}`);
+    banda(d.fincas.length > 1 ? `Total a comprar (${d.fincas.map((f) => f.finca).join(' + ')})` : 'Total a comprar', [255, 214, 102], C.ambarT);
+    lista2(d.total.map((t) => ({ nombre: t.nombre, u: t.u, v: t.total })), C.ambar, C.ambarT);
+    pieReg(o, `Hoja de pedido · ${d.cliente} · ${d.intervalo}`);
     return doc.output('blob');
   }
 
