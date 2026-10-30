@@ -297,7 +297,11 @@
     const est = aportesEstiercol(b);
     const estA = [est.n, est.p2o5, est.k2o, est.cao, est.mgo];
     const agua = aportesAgua(anal.agua, b.dosisRiego);
-    const teor = NUTRIENTES.map((_, j) => num(camp.necesidades && camp.necesidades[j]));
+    // Necesidad teórica: la escrita a mano o, si está vacía, la de la guía MAPA (cfg.guia)
+    const guia = cfg.guia ? cfg.guia(plan, camp) : null;
+    const manual = NUTRIENTES.map((_, j) => num(camp.necesidades && camp.necesidades[j]));
+    const teor = manual.map((m, j) => (m != null ? m : (guia && guia.vals[j] != null ? guia.vals[j] : null)));
+    const origen = manual.map((m, j) => (m != null ? 'manual' : teor[j] != null ? 'guia' : null));
     const factor = NUTRIENTES.map((_, j) => num(camp.factores && camp.factores[j]) ?? 1);
     const neto = teor.map((t, j) => (t == null ? null : Math.max(0, (t - estA[j] - agua[j]) * factor[j])));
     const objetivo = neto.slice();
@@ -306,7 +310,7 @@
     const suma = sumaReparto(rep);
     const mensual = rep && rep.pct ? MESES.map((_, i) => NUTRIENTES.map((__, j) => (objetivo[j] == null ? 0 : objetivo[j] * n0(rep.pct[i] && rep.pct[i][j]) / 100))) : null;
     const plan12 = ((cfg.ufDe && cfg.ufDe(plan, camp)) || camp.ufAplicadas || []).map((m) => NUTRIENTES.map((_, j) => n0(m && m[j])));
-    return { b, teor, estiercol: estA, agua, factor, neto, objetivo, limitadoN, nBalance: b.aporte, suma, repartoOk: !!rep && suma.every((x) => Math.abs(x - 100) < 0.05), mensual, plan12 };
+    return { b, teor, origen, guia, estiercol: estA, agua, factor, neto, objetivo, limitadoN, nBalance: b.aporte, suma, repartoOk: !!rep && suma.every((x) => Math.abs(x - 100) < 0.05), mensual, plan12 };
   }
 
   /* ---------- Avisos de un plan ---------- */
@@ -362,7 +366,10 @@
     const rep = plan.reparto && db.repartos ? db.repartos.find((r) => r.id === plan.reparto) : null;
     if (!rep) add('medio', 'Sin tipo de reparto mensual', 'necesidades');
     else { const su = sumaReparto(rep); const mal = NUTRIENTES.filter((_, j) => su[j] > 0 && Math.abs(su[j] - 100) >= 0.05); if (mal.length) add('medio', `El reparto «${rep.nombre}» no suma 100 % en ${mal.join(', ')}`, 'necesidades'); }
-    if (!(camp.necesidades || []).some((x) => num(x))) add('medio', 'Faltan las necesidades anuales', 'necesidades');
+    if (!(camp.necesidades || []).some((x) => num(x))) {
+      const g = cfg.guia ? cfg.guia(plan, camp) : null;
+      if (!g || !g.vals.some((x) => x != null)) add('medio', `Faltan las necesidades anuales${g && g.avisos.length ? ': ' + g.avisos.join('; ').toLowerCase() : ''}`, 'necesidades');
+    }
     if (!num(plan.anioPlantacion)) add('bajo', 'Falta el año de plantación', 'finca');
     return out;
   }

@@ -87,6 +87,7 @@ h3 { font-size: 14.5px; margin: 0 0 10px; color: var(--brand); }
 .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); }
 input.cell { padding: 4px 6px; font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
 input.cell.izq { text-align: left; }
+input.cell.guia::placeholder { color: var(--brand); opacity: .8; font-style: italic; }
 
 .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 12px; background: var(--chip); font-size: 12px; white-space: nowrap; }
 .chip.v { background: var(--brand-soft); color: var(--brand); }

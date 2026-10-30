@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.8.4';
+const APP_VERSION = '1.9.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -38,7 +38,7 @@ const TEXTO_PIE = 'Este programa de cálculo ha sido diseñado íntegramente par
 function dbVacia() {
   return {
     version: 1, creado: new Date().toISOString(), guardado: null,
-    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' }, rd: { precipitacion: '', lluvia: '', asesor: '', registro: '', objetivoMO: '', prohibiciones: '', almacenamiento: '', proteccion: '', asesoramiento: '', cuaderno: '' } },
+    config: { eto: CALC.ETO_MULA.slice(), kc: structuredClone(CALC.KC), antiguedad: { ...CALC.TABLAS.antiguedad }, limiteNOrganico: CALC.TABLAS.limiteNOrganico, autor: 'Francis Gabarrón · Gestión Agrícola', mx: { url: '', clave: '' }, pie: { texto: TEXTO_PIE, telefono: '', email: '' }, planAnual: { aplicacion: '', medidas: '' }, guia: structuredClone(GUIA.AJUSTES), rd: { precipitacion: '', lluvia: '', asesor: '', registro: '', objetivoMO: '', prohibiciones: '', almacenamiento: '', proteccion: '', asesoramiento: '', cuaderno: '' } },
     planes: [], analiticas: [], textos: {}, titulares: {}, programas: []
   };
 }
@@ -51,13 +51,27 @@ function migrar(d) {
   d.config.pie = { ...v.config.pie, ...(d.config.pie || {}) };
   d.config.planAnual = { ...v.config.planAnual, ...(d.config.planAnual || {}) };
   d.config.rd = { ...v.config.rd, ...(d.config.rd || {}) };
+  const g = d.config.guia || {};
+  d.config.guia = { ...v.config.guia, ...g, plena: { ...v.config.guia.plena, ...(g.plena || {}) } };
   d.textos = d.textos || {}; d.titulares = d.titulares || {}; d.programas = d.programas || [];
   d.planes = d.planes || []; d.analiticas = d.analiticas || []; d.repartos = d.repartos || []; d.productos = d.productos || [];
   return d;
 }
 let ixCache = { ref: null, ix: null };
 function ixProd() { if (!db) return FERT.indice([]); if (ixCache.ref !== db.productos || ixCache.n !== db.productos.length) ixCache = { ref: db.productos, n: db.productos.length, ix: FERT.indice(db.productos) }; return ixCache.ix; }
-const cfg = () => ({ ufDe: (p, c) => FERT.ufCampana(p, c, ixProd()), eto: db.config.eto, kc: db.config.kc, tablas: { ...CALC.TABLAS, antiguedad: db.config.antiguedad, limiteNOrganico: +db.config.limiteNOrganico || 170 } });
+const cfg = () => ({ ufDe: (p, c) => FERT.ufCampana(p, c, ixProd()), guia: guiaDe, eto: db.config.eto, kc: db.config.kc, tablas: { ...CALC.TABLAS, antiguedad: db.config.antiguedad, limiteNOrganico: +db.config.limiteNOrganico || 170 } });
+/* Necesidades de la guía MAPA para la campaña camp de un plan (guia.js) */
+function guiaDe(p, camp) {
+  const key = Object.keys(p.campanas || {}).find((k) => p.campanas[k] === camp) || ui.camp;
+  return GUIA.necesidades(p, key, camp, analDePlan(p), db.config.guia);
+}
+/* Tipos de reparto de la guía: se añaden si faltan (no se pisan si ya están, aunque se hayan editado) */
+function asegurarRepartosGuia(d) {
+  d.repartos = d.repartos || [];
+  let cambio = false;
+  for (const r of GUIA.REPARTOS) if (!d.repartos.some((x) => x.id === r.id)) { d.repartos.push(structuredClone(r)); cambio = true; }
+  return cambio;
+}
 const planSel = () => db && db.planes.find((p) => p.id === ui.planId) || null;
 const anal = (id) => (id ? db.analiticas.find((a) => a.id === id) || null : null);
 const campDe = (p) => (p && p.campanas ? p.campanas[ui.camp] : null);
@@ -168,8 +182,8 @@ function asegurarFert(d) {
 }
 function postCarga() {
   if (!db || conn !== 'listo') return;
-  const a = IMP.asegurarRepartos(db), b = asegurarFert(db);
-  if (a || b) commit(() => {}, { render: false });
+  const a = IMP.asegurarRepartos(db), b = asegurarFert(db), g = asegurarRepartosGuia(db);
+  if (a || b || g) commit(() => {}, { render: false });
 }
 function prepararVista() {
   if (!db) return;
@@ -558,6 +572,7 @@ function tabFinca(el, p) {
       ${campo('Emisores por árbol', 'p.emisores', p.emisores)}
       ${campo('Líneas de emisores', 'p.lineas', p.lineas || 1, { opciones: [[1, '1 línea'], [2, '2 líneas']] })}
       ${campo('Textura (eficiencia del riego)', 'p.textura', p.textura, { tipo: 'txt', opciones: CALC.TEXTURAS })}
+      ${p.grupo === 'FRUTALES' || p.grupo === 'ALMENDRO' ? campo('Cubierta vegetal (guía MAPA)', 'p.cubierta', p.cubierta || '', { tipo: 'txt', ancho: 2, opciones: GUIA.CUBIERTA.map(([k, t, n]) => [k, n ? `${t} · +${n} kg N/ha` : t]) }) : ''}
     </div>
     <h3 style="margin-top:18px">Kc mensual <span class="muted small" style="font-weight:400">${p.kc ? '(propio de este plan)' : '(el del grupo ' + esc(p.grupo) + ')'}</span></h3>
     <div class="scroll-x"><table class="t"><tr>${CALC.MESES.map((m) => `<th class="n">${m.slice(0, 3)}</th>`).join('')}<th></th></tr>
@@ -906,7 +921,7 @@ async function traerV10() {
   if (!d || !d.planes) { toast('No hay datos de la versión 1.0 en esta carpeta', true); return; }
   if (db.planes.length && !confirm(`Drive ya tiene ${db.planes.length} planes. ¿Sustituirlos por los ${d.planes.length} de la versión 1.0?`)) return;
   const logo = await ALM.logo();
-  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; IMP.asegurarRepartos(db); asegurarFert(db); });
+  commit(() => { db = migrar(d); if (logo && !db.config.logo) db.config.logo = logo; IMP.asegurarRepartos(db); asegurarFert(db); asegurarRepartosGuia(db); });
   prepararVista(); renderAll();
   toast(`${plural(d.planes.length, 'plan traído', 'planes traídos')} de la versión 1.0`);
 }
@@ -969,8 +984,11 @@ function tabNecesidades(el, p, camp) {
   const nc = CALC.necesidades(p, camp, analDePlan(p), cfg(), rep);
   const edad = CALC.edad(p, ui.camp);
   const tiposGrupo = [...db.repartos].sort((a, b) => (a.grupo === p.grupo ? 0 : 1) - (b.grupo === p.grupo ? 0 : 1) || a.nombre.localeCompare(b.nombre, 'es'));
+  const g = nc.guia;
+  const gv = (j) => (g && g.vals[j] != null ? g.vals[j] : null);
   const filas = NUT_TXT.map((nu, j) => `<tr><td><b>${nu}</b></td>
-      <td class="w"><input class="cell" data-nec="${j}" value="${fmtIn(camp.necesidades && camp.necesidades[j])}"></td>
+      <td class="n">${gv(j) != null ? fmt(gv(j), 1) : '<span class="muted">–</span>'}</td>
+      <td class="w"><input class="cell${nc.origen[j] === 'guia' ? ' guia' : ''}" data-nec="${j}" value="${fmtIn(camp.necesidades && camp.necesidades[j])}" placeholder="${gv(j) != null ? esc(fmt(gv(j), 1)) : ''}" title="${nc.origen[j] === 'guia' ? 'Vacío: se usa la guía MAPA. Escribe un valor para ponerlo a mano.' : nc.origen[j] === 'manual' ? 'Puesto a mano. Bórralo para usar la guía MAPA.' : ''}"></td>
       <td class="n">${fmt(nc.estiercol[j], 1)}</td><td class="n">${fmt(nc.agua[j], 1)}</td>
       <td class="w"><input class="cell" data-fac="${j}" value="${fmtIn(nc.factor[j])}"></td>
       <td class="n">${fmt(nc.neto[j], 1)}</td>
@@ -985,21 +1003,44 @@ function tabNecesidades(el, p, camp) {
       ${NUT_TXT.map((nu, j) => `<tr><td><b>${nu}</b></td>${nc.mensual.map((m) => `<td class="n">${m[j] ? fmt(m[j], 1) : '<span class="muted">–</span>'}</td>`).join('')}<td class="n"><b>${fmt(tot[j], 1)}</b></td></tr>`).join('')}
       ${plan ? `<tr class="muted"><td>N en el plan</td>${plan.map((m) => `<td class="n">${m[0] ? fmt(m[0], 1) : '–'}</td>`).join('')}<td class="n">${fmt(plan.reduce((t, m) => t + m[0], 0), 1)}</td></tr>` : ''}</table></div>`;
   }
+  const manualTapa = NUT_TXT.some((_, j) => nc.origen[j] === 'manual' && gv(j) != null);
+  const sug = g && g.reparto ? db.repartos.find((r) => r.id === g.reparto) : null;
+  const cajaGuia = g ? `<div class="card" style="box-shadow:none;margin-top:12px"><h3 style="margin-top:0">Guía MAPA de fertilización racional</h3>
+      ${g.lineas.map((t) => `<p class="small" style="margin:2px 0">${esc(t)}</p>`).join('')}
+      ${g.avisos.length ? `<div class="aviso" style="margin-top:6px">${g.avisos.map(esc).join(' · ')}</div>` : ''}
+      <div class="row" style="margin-top:8px">${manualTapa ? '<button class="btn peq p" id="nGuia">Usar la guía en este plan</button>' : (g.vals.some((x) => x != null) ? '<span class="chip v">Usando la guía</span>' : '')}${camp.necesidadesPrevias ? '<button class="btn peq" id="nPrev">Volver a las anteriores</button>' : ''}<span class="small muted">Casilla vacía = valor de la guía (en gris); escribe un número para ponerlo a mano.</span></div></div>` : '';
+  const cajaRep = sug && sug.id !== p.reparto ? `<div class="aviso" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">Reparto de la guía para este cultivo: <b>${esc(sug.nombre)}</b><button class="btn peq" id="nRepGuia">Usarlo</button></div>` : '';
   el.innerHTML = `<div class="row" style="margin-bottom:10px">${edad != null ? `<span class="chip">Edad: ${edad} años en ${esc(ui.camp)}</span>` : '<span class="chip amb">Sin año de plantación (pestaña Finca)</span>'}<span class="chip">${esc(p.tipoCultivo || p.cultivo)}</span></div>
     <h3>Necesidades anuales (UF/ha)</h3>
-    <div class="scroll-x"><table class="t"><tr><th></th><th class="n">Necesidad teórica</th><th class="n">− Estiércol</th><th class="n">− Agua de riego</th><th class="n">× Factor</th><th class="n">A aportar</th><th class="n">Objetivo</th></tr>${filas}</table></div>
-    <p class="small muted">Necesidad teórica: la del Excel por ahora (las tablas por cultivo y edad según bibliografía llegarán más adelante). Agua: con ${fmt(nc.b.dosisRiego, 0)} m³/ha de riego. El N objetivo no pasa del balance (${fmt(nc.nBalance, 1)} kg N/ha).</p>
+    <div class="scroll-x"><table class="t"><tr><th></th><th class="n">Guía MAPA</th><th class="n">Necesidad teórica</th><th class="n">− Estiércol</th><th class="n">− Agua de riego</th><th class="n">× Factor</th><th class="n">A aportar</th><th class="n">Objetivo</th></tr>${filas}</table></div>
+    <p class="small muted">Necesidad teórica: la que escribas o, si la casilla está vacía, la de la guía MAPA. Agua: con ${fmt(nc.b.dosisRiego, 0)} m³/ha de riego. El N objetivo no pasa del balance (${fmt(nc.nBalance, 1)} kg N/ha).</p>
+    ${cajaGuia}
     <h3 style="margin-top:18px">Reparto mensual</h3>
     <div class="row"><select class="cell izq" id="nRep" style="max-width:360px"><option value="">— Elegir tipo de reparto —</option>${tiposGrupo.map((r) => `<option value="${r.id}" ${r.id === p.reparto ? 'selected' : ''}>${esc(r.nombre)} (${esc(r.grupo.toLowerCase())})</option>`).join('')}</select>
       <button class="btn peq" id="nEdit" ${rep ? '' : 'disabled'}>Editar este tipo</button><button class="btn peq" id="nTipos">Ver todos los tipos</button></div>
+    ${cajaRep}
     ${sumaMal.length ? `<div class="aviso" style="margin-top:8px">El tipo «${esc(rep.nombre)}» no suma 100 %: ${sumaMal.join(', ')}. Corrígelo en Repartos.</div>` : ''}
     <div style="margin-top:12px">${mes || '<p class="muted">Elige un tipo de reparto para ver las UF de cada mes.</p>'}</div>`;
   $$('[data-nec]', el).forEach((i) => i.addEventListener('change', () => { commit(() => { camp.necesidades = camp.necesidades || [null, null, null, null, null]; camp.necesidades[+i.dataset.nec] = CALC.num(i.value); }, { render: false }); renderDetalleSoloCuerpo(); }));
   $$('[data-fac]', el).forEach((i) => i.addEventListener('change', () => { commit(() => { camp.factores = camp.factores || [1, 1, 1, 1, 1]; camp.factores[+i.dataset.fac] = CALC.num(i.value) ?? 1; }, { render: false }); renderDetalleSoloCuerpo(); }));
   $('#nRep', el).onchange = (e) => { commit(() => { p.reparto = e.target.value || null; }, { render: false }); renderDetalleSoloCuerpo(); };
+  if ($('#nGuia', el)) $('#nGuia', el).onclick = () => { commit(() => { usarGuiaEnCampana(camp, g); }, { render: false }); renderDetalleSoloCuerpo(); toast('Necesidades de la guía MAPA en este plan'); };
+  if ($('#nPrev', el)) $('#nPrev', el).onclick = () => { commit(() => { camp.necesidades = camp.necesidadesPrevias.slice(); delete camp.necesidadesPrevias; }, { render: false }); renderDetalleSoloCuerpo(); toast('Necesidades anteriores recuperadas'); };
+  if ($('#nRepGuia', el)) $('#nRepGuia', el).onclick = () => { commit(() => { p.repartoPrevio = p.reparto || null; p.reparto = sug.id; }, { render: false }); renderDetalleSoloCuerpo(); };
   $('#nEdit', el).onclick = () => { ui.vista = 'repartos'; ui.repId = p.reparto; renderAll(); };
   $('#nTipos', el).onclick = () => { ui.vista = 'repartos'; renderAll(); };
   enlazarGrafica(el, () => renderDetalleSoloCuerpo());
+}
+
+/* Vacía las necesidades escritas a mano donde la guía da valor (guarda las anteriores para poder volver) */
+function usarGuiaEnCampana(camp, g) {
+  if (!g || !g.vals.some((x) => x != null)) return false;
+  const actual = (camp.necesidades || [null, null, null, null, null]).slice();
+  const nuevo = actual.map((v, j) => (g.vals[j] != null ? null : v));
+  if (JSON.stringify(nuevo) === JSON.stringify(actual)) return false;
+  camp.necesidadesPrevias = actual;
+  camp.necesidades = nuevo;
+  return true;
 }
 
 /* ---------- REPARTOS (tipos de reparto mensual) ---------- */
@@ -1749,6 +1790,57 @@ function renderAvisos(v) {
 }
 
 /* ---------- AJUSTES ---------- */
+/* ---------- Ajustes · necesidades de la guía MAPA ---------- */
+function htmlGuiaAjustes() {
+  const gj = db.config.guia;
+  const cs = campanas();
+  const prev = db.planes.filter((p) => { const c = p.campanas && p.campanas[ui.camp]; return (c && c.necesidadesPrevias) || ('repartoPrevio' in p); }).length;
+  return `<div class="card"><h3>Necesidades de la guía MAPA</h3>
+    <p class="small">Cítricos: por diámetro de copa y marco (máximo 240 N, 80 P2O5, 140 K2O y 180 MgO kg/ha). Frutales, almendro y olivo: por producción, año de cultivo, P y K de la analítica de suelo y cubierta. En cada plan, una casilla de necesidad vacía usa la guía.</p>
+    <div class="grid3"><label class="fld"><span>Cítricos: curva de plantones hasta el año</span><input data-guia="plantonHasta" value="${fmtIn(gj.plantonHasta)}" inputmode="numeric"></label>
+      <label class="fld"><span>Frutales: plena producción desde el año</span><input data-guiap="FRUTALES" value="${fmtIn(gj.plena.FRUTALES)}" inputmode="numeric"></label>
+      <label class="fld"><span>Almendro: plena producción desde el año</span><input data-guiap="ALMENDRO" value="${fmtIn(gj.plena.ALMENDRO)}" inputmode="numeric"></label></div>
+    <p class="small muted">El año de plantación cuenta como año 1.</p>
+    <div class="row" style="margin-top:10px"><label class="fld" style="max-width:160px"><span>Campaña</span><select id="aGCamp">${cs.map((k) => `<option ${k === ui.camp ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
+      <div class="fld"><span>&nbsp;</span><div class="row"><button class="btn p" id="aGApl">Pasar todos los planes a la guía</button>${prev ? `<button class="btn" id="aGDes">Deshacer (${plural(prev, 'plan', 'planes')})</button>` : ''}</div></div></div>
+    <p class="small muted">Vacía las necesidades escritas a mano (N, P2O5, K2O y MgO donde la guía da valor) y pone el tipo de reparto de la guía. Lo anterior se guarda para poder deshacer.</p></div>`;
+}
+function enlazarGuiaAjustes(v) {
+  $$('[data-guia]', v).forEach((i) => i.onchange = () => { commit((d) => { d.config.guia[i.dataset.guia] = CALC.num(i.value); }, { render: false }); });
+  $$('[data-guiap]', v).forEach((i) => i.onchange = () => { commit((d) => { d.config.guia.plena[i.dataset.guiap] = CALC.num(i.value); }, { render: false }); });
+  const campSel = () => ($('#aGCamp', v) ? $('#aGCamp', v).value : ui.camp);
+  if ($('#aGApl', v)) $('#aGApl', v).onclick = () => {
+    const k = campSel();
+    const planes = db.planes.filter((p) => p.campanas && p.campanas[k]);
+    const sinDatos = planes.filter((p) => { const g = GUIA.necesidades(p, k, p.campanas[k], analDePlan(p), db.config.guia); return !g.vals.some((x) => x != null); });
+    if (!confirm(`¿Pasar a la guía MAPA los ${planes.length} planes de la campaña ${k}?\n\nSe vacían sus necesidades escritas a mano donde la guía da valor y se pone el reparto de la guía. Se puede deshacer.${sinDatos.length ? `\n\n${plural(sinDatos.length, 'plan no tiene', 'planes no tienen')} datos para la guía (copa, marco o producción) y se quedan como están.` : ''}`)) return;
+    let n = 0, r = 0;
+    commit(() => {
+      for (const p of planes) {
+        const c = p.campanas[k];
+        const g = GUIA.necesidades(p, k, c, analDePlan(p), db.config.guia);
+        if (usarGuiaEnCampana(c, g)) n++;
+        if (g.reparto && db.repartos.some((x) => x.id === g.reparto) && p.reparto !== g.reparto) { if (!('repartoPrevio' in p)) p.repartoPrevio = p.reparto || null; p.reparto = g.reparto; r++; }
+      }
+    });
+    toast(`Guía MAPA: necesidades en ${plural(n, 'plan', 'planes')} y reparto en ${plural(r, 'plan', 'planes')}`);
+  };
+  if ($('#aGDes', v)) $('#aGDes', v).onclick = () => {
+    const k = campSel();
+    if (!confirm(`¿Volver a las necesidades y repartos que había antes de pasar a la guía (campaña ${k})?`)) return;
+    let n = 0;
+    commit(() => {
+      for (const p of db.planes) {
+        const c = p.campanas && p.campanas[k];
+        let tocado = false;
+        if (c && c.necesidadesPrevias) { c.necesidades = c.necesidadesPrevias.slice(); delete c.necesidadesPrevias; tocado = true; }
+        if ('repartoPrevio' in p) { p.reparto = p.repartoPrevio; delete p.repartoPrevio; tocado = true; }
+        if (tocado) n++;
+      }
+    });
+    toast(`Deshecho en ${plural(n, 'plan', 'planes')}`);
+  };
+}
 function renderAjustes(v) {
   const c = db.config;
   const T = CALC.TABLAS;
@@ -1791,6 +1883,7 @@ function renderAjustes(v) {
       <label class="fld"><span>Precipitación media anual (mm)</span><input data-rd="precipitacion" value="${esc((c.rd || {}).precipitacion || '')}" inputmode="decimal" placeholder="Zona de Mula"></label></div>
       ${[['lluvia', 'Reparto de la lluvia en el año'], ['objetivoMO', 'Objetivo de materia orgánica'], ['prohibiciones', 'Prohibiciones y precauciones'], ['almacenamiento', 'Almacenamiento'], ['proteccion', 'Protección de aguas y suelos'], ['asesoramiento', 'Asesoramiento técnico'], ['cuaderno', 'Cuaderno de explotación']].map(([k, l]) => `<label class="fld" style="margin-top:10px"><span>${l}</span><textarea data-rd="${k}" rows="3" placeholder="${esc(RD_TXT[k])}">${esc((c.rd || {})[k] || '')}</textarea></label>`).join('')}
       <p class="small muted">Forma de aplicación y medidas de emisiones: las del plan anual (arriba). Vacío = el texto de ejemplo en gris.</p></div>
+    ${htmlGuiaAjustes()}
     ${htmlProgramasAjustes()}
     <div class="card"><h3>Copia de seguridad</h3><div class="row"><button class="btn" id="aExp">Descargar copia (.json)</button><label class="btn">Restaurar copia…<input type="file" id="aRes" accept=".json,application/json" hidden></label></div></div>
   </div>
@@ -1839,6 +1932,7 @@ function renderAjustes(v) {
   $('#aAutor').onchange = (e) => commit((d) => { d.config.autor = e.target.value.trim(); }, { render: false });
   $('#aPaApl').onchange = (e) => commit((d) => { d.config.planAnual.aplicacion = e.target.value.trim(); }, { render: false });
   enlazarProgramasAjustes(v);
+  enlazarGuiaAjustes(v);
   $('#aCampIni').onchange = (e) => { commit((d) => { d.config.campanaInicio = e.target.value; }, { render: false }); toast(e.target.value ? `La app se abrirá en la campaña ${e.target.value}` : 'La app se abrirá en la campaña más reciente'); };
   $$('[data-rd]', v).forEach((i) => i.onchange = () => commit((d) => { d.config.rd = d.config.rd || {}; d.config.rd[i.dataset.rd] = i.value.trim(); }, { render: false }));
   $('#aPaMed').onchange = (e) => commit((d) => { d.config.planAnual.medidas = e.target.value.trim(); }, { render: false });

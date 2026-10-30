@@ -410,7 +410,7 @@ function faltasRD(cliente, planes, campKey) {
     else { const st = p.sigpac.reduce((t, r) => t + (+r.sup || 0), 0); if (p.superficie && Math.abs(st - p.superficie) > 0.01) q.push(`los recintos suman ${fmt(st, 2)} ha y el plan tiene ${fmt(p.superficie, 2)} ha`); }
     if (!s || s.plantilla) q.push('datos de suelo');
     if (camp && !CALC.num(camp.produccionEst)) q.push('producción estimada');
-    if (camp && !(camp.necesidades || []).some((x) => CALC.num(x))) q.push('necesidades');
+    if (camp && !(camp.necesidades || []).some((x) => CALC.num(x)) && !guiaDe(p, camp).vals.some((x) => x != null)) q.push('necesidades');
     if (q.length) f.push(`${p.nombre}: ${q.join(', ')}`);
   }
   return f;
