@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -217,38 +217,64 @@ async function conectarOneDrive() {
   } catch (e) { if (e.name !== 'AbortError') toast(e.message || String(e), true); return false; }
 }
 async function asegurarOneDrive() { return od === 'listo' ? true : conectarOneDrive(); }
-function pendientesOneDrive() {
-  let n = 0;
-  for (const p of (db && db.planes) || []) for (const c of Object.values(p.campanas || {})) for (const x of [...Object.values(c.pdf || {}), ...Object.values(c.informes || {})]) if (x && x.pendiente) n++;
-  return n;
+/* Registros de PDF hechos en la tablet que esperan a pasar a OneDrive */
+function regsPendientes(d = db) {
+  const out = [];
+  for (const p of (d && d.planes) || []) for (const [ck, c] of Object.entries(p.campanas || {})) {
+    for (const [k, x] of Object.entries(c.pdf || {})) if (x && x.pendiente) out.push({ p, camp: ck, reg: x, txt: `Balance N ${k} · ${ck}` });
+    for (const [k, x] of Object.entries(c.informes || {})) if (x && x.pendiente) out.push({ p, camp: ck, reg: x, txt: `Informe de ${CALC.MESES[+k].toLowerCase()} ${ck}` });
+  }
+  return out;
 }
+function pendientesOneDrive() { return regsPendientes().length; }
 function bannerOneDrive() {
   const n = pendientesOneDrive();
   banner(`Hay ${plural(n, 'PDF hecho', 'PDF hechos')} en la tablet pendientes de pasar a OneDrive.<span class="spacer"></span><button class="btn peq" id="bnOd">Conectar OneDrive y pasarlos</button>`);
   $('#bnOd').onclick = () => conectarOneDrive();
 }
 let pasandoPdf = false;
+const ESPERA_PDF = 15 * 60 * 1000; // un PDF recién subido espera a que lleguen también los datos de la tablet
 async function procesarPendientes() {
   if (od !== 'listo' || conn !== 'listo' || pasandoPdf || offline) return;
   pasandoPdf = true;
   try {
     const lista = await NUBE.pdfs();
+    const ahora = Date.now();
     let n = 0;
     for (const x of lista) {
       const m = x.meta || {};
+      // ¿Ya han llegado los datos de la tablet con este PDF marcado como pendiente?
+      const p = db.planes.find((q) => q.id === m.planId), c = p && p.campanas && p.campanas[m.camp];
+      const reg = c && (m.tipo === 'informe' ? c.informes && c.informes[m.mes] : c.pdf && c.pdf[m.modo]);
+      const esperado = !!(reg && reg.pendiente && (!reg.pdfId || reg.pdfId === x.id));
+      const reciente = x.fecha && ahora - new Date(x.fecha).getTime() < ESPERA_PDF;
+      if (m.planId && !esperado && reciente) continue; // los datos aún no han llegado: se pasa en la siguiente vuelta
       const blob = await NUBE.leerPdf(x.id);
       const ruta = m.tipo === 'raiz' ? await ALM.guardarEnRaiz(m.carpeta || CARPETA_INFORMES, x.nombre, blob) : await ALM.guardarPDF(m.carpeta || 'Sin carpeta', x.nombre, blob);
       if (m.tipo === 'informe') await ALM.guardarEnRaiz(CARPETA_INFORMES, x.nombre, blob);
       await NUBE.borrarPdf(x.id);
       commit((d) => {
-        const p = d.planes.find((q) => q.id === m.planId);
-        const c = p && p.campanas && p.campanas[m.camp];
-        const reg = c && (m.tipo === 'informe' ? c.informes && c.informes[m.mes] : c.pdf && c.pdf[m.modo]);
-        if (reg && reg.pendiente && (!reg.pdfId || reg.pdfId === x.id)) { reg.pendiente = false; reg.ruta = ruta; }
+        d.pdfsPasados = d.pdfsPasados || {};
+        d.pdfsPasados[x.id] = { ruta, fecha: new Date().toISOString() };
+        const ks = Object.keys(d.pdfsPasados); if (ks.length > 300) ks.sort((a, b) => (d.pdfsPasados[a].fecha || '').localeCompare(d.pdfsPasados[b].fecha || '')).slice(0, ks.length - 300).forEach((k) => delete d.pdfsPasados[k]);
+        const pp = d.planes.find((q) => q.id === m.planId), cc = pp && pp.campanas && pp.campanas[m.camp];
+        const rr = cc && (m.tipo === 'informe' ? cc.informes && cc.informes[m.mes] : cc.pdf && cc.pdf[m.modo]);
+        if (rr && rr.pendiente && (!rr.pdfId || rr.pdfId === x.id)) { rr.pendiente = false; rr.ruta = ruta; }
       }, { render: false });
       n++;
     }
-    if (n) { toast(`${plural(n, 'PDF pasado', 'PDF pasados')} a OneDrive`); renderAll(); }
+    // Marcas que se quedaron colgadas: el PDF ya no está en Drive (se pasó antes de que llegaran los datos de la tablet)
+    const enDrive = new Set(lista.map((x) => x.id));
+    const colgados = regsPendientes().filter(({ reg }) => !(reg.pdfId && enDrive.has(reg.pdfId)) && (!reg.fecha || ahora - new Date(reg.fecha).getTime() > ESPERA_PDF));
+    if (colgados.length) commit((d) => {
+      for (const { reg } of regsPendientes(d)) {
+        if (reg.pdfId && enDrive.has(reg.pdfId)) continue;
+        if (reg.fecha && ahora - new Date(reg.fecha).getTime() <= ESPERA_PDF) continue;
+        const ya = reg.pdfId && d.pdfsPasados && d.pdfsPasados[reg.pdfId];
+        reg.pendiente = false; reg.ruta = ya ? ya.ruta : 'Pasado a OneDrive (sin confirmar la ruta)';
+      }
+    }, { render: false });
+    if (n || colgados.length) { if (n) toast(`${plural(n, 'PDF pasado', 'PDF pasados')} a OneDrive`); renderAll(); }
   } catch (e) { if (e.code !== 'offline') toast('No se pudieron pasar los PDF a OneDrive: ' + (e.message || e), true); }
   finally { pasandoPdf = false; }
 }
@@ -1737,6 +1763,7 @@ function renderAjustes(v) {
       <div class="fld"><span>&nbsp;</span><div class="row"><button class="btn" id="aRec">Recargar de Drive</button><button class="btn" id="aNube">Cambiar dirección o clave</button></div></div></div>
       <p class="small muted">Último guardado: ${db.guardado ? `${fechaEs(db.guardado.fecha)} ${new Date(db.guardado.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} desde ${esc(db.guardado.equipo)}` : 'aún no'} · versión ${versionNube}.</p></div>
     <div class="card"><h3>OneDrive (solo en el ordenador)</h3>
+      ${pendientesOneDrive() ? `<div class="aviso" style="display:block;margin-bottom:8px"><b>PDF pendientes de pasar a OneDrive:</b><ul style="margin:4px 0 0 18px;padding:0">${regsPendientes().map((x) => `<li>${esc(x.p.nombre)} · ${esc(x.txt)} · hecho el ${fechaEs(x.reg.fecha)}</li>`).join('')}</ul><span class="small muted">Se pasan solos cuando el ordenador tiene la app abierta con OneDrive conectado.</span></div>` : ''}
       ${od === 'no-disponible' ? `<p class="small">En este equipo no se puede usar la carpeta de OneDrive. Los PDF que hagas aquí quedan en Drive y el ordenador los pasa solo a la carpeta de cada cliente. ${pendientesOneDrive() ? `<b>Pendientes ahora: ${pendientesOneDrive()}.</b>` : ''}</p>`
       : `<p class="small">Carpeta <b>${esc(ALM.nombreRaiz() || '—')}</b> ${od === 'listo' ? '<span class="chip v">Conectada</span>' : '<span class="chip amb">Sin conectar</span>'}. Se usa para importar los Excels de <b>Clientes</b> y guardar los PDF en la carpeta de cada cliente y finca. ${pendientesOneDrive() ? `<b>PDF de la tablet pendientes: ${pendientesOneDrive()}.</b>` : ''}</p>
       <div class="row"><button class="btn" id="aOd">${od === 'listo' ? 'Cambiar de carpeta' : od === 'pedir-permiso' ? 'Conectar' : 'Elegir carpeta Asesoramiento agrícola'}</button><button class="btn p" id="aImp">Importar los Excels</button><button class="btn" id="aV10">Traer datos de la versión 1.0</button></div>`}</div>
