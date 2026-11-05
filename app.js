@@ -2,7 +2,7 @@
 /* Planes de abonado · FG Agro — app de escritorio (Edge o Chrome en Windows).
    Fase 1: planes (fincas), analíticas compartidas, riego y balance de N con PDF estimado y cerrado.
    Los datos viven en OneDrive (carpeta «_App planes de abonado»), no en el código. */
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.9.1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -134,8 +134,8 @@ async function comprobarCambios() {
   renderEstado();
 }
 window.addEventListener('beforeunload', (e) => { if (dirty) { guardarAhora(); e.preventDefault(); e.returnValue = ''; } });
-window.addEventListener('online', () => { offline = false; comprobarCambios(); procesarPendientes(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { comprobarCambios(); procesarPendientes(); traerTextosPendientes(); } });
+window.addEventListener('online', () => { offline = false; comprobarCambios(); procesarPendientes(); refrescarMaestros(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { comprobarCambios(); procesarPendientes(); traerTextosPendientes(); refrescarMaestros(); } });
 
 /* ---------- Avisos, toast, banner, modal ---------- */
 let toastT = null;
@@ -168,6 +168,7 @@ async function arrancar() {
   if (!NUBE.conectada()) { conn = 'sin-nube'; renderAll(); }
   else await abrir();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  refrescarMaestros({ forzar: true });
   // Cada 90 s: trae los cambios de otros equipos y, si este ordenador tiene OneDrive, pasa los PDF hechos en la tablet
   if (!window.__reloj) window.__reloj = setInterval(async () => { await comprobarCambios(); if (od === 'listo' && pendientesOneDrive()) procesarPendientes(); }, 90000);
 }
@@ -1735,13 +1736,33 @@ function nuevoPlan() {
   const clis = IX ? mxData.clientes.filter((c) => !/^baja$/i.test(c.estado || '')).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')) : [];
   const m = modal('Nuevo plan', `<div class="grid2">
     <label class="fld"><span>Cliente</span><input id="nCli" list="nCliL"><datalist id="nCliL">${[...new Set([...db.planes.map((p) => p.cliente), ...clis.map((c) => c.nombre)])].map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
-    <label class="fld"><span>Finca</span><input id="nFin" list="nFinL"><datalist id="nFinL">${[...new Set(db.planes.map((p) => p.finca))].map((c) => `<option value="${esc(c)}">`).join('')}</datalist></label>
+    <label class="fld"><span>Finca</span><input id="nFin" list="nFinL" placeholder="Elige el cliente primero"><datalist id="nFinL"></datalist></label>
     <label class="fld"><span>Tipo de cultivo</span><select id="nTipo">${CALC.CULTIVOS.map((c) => `<option>${c.nombre}</option>`).join('')}<option>Mixto (varios cultivos)</option></select></label>
     <label class="fld"><span>Nombre del plan (y del PDF)</span><input id="nNom" placeholder="p. ej. Juan Limón Verna Finca X"></label>
     <label class="fld" style="grid-column:span 2"><span>Copiar marco, riego y analíticas de otro plan</span><select id="nCop">${opsCopiar.map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select></label></div>
+    <p class="small muted" id="nFinInfo"></p>
     <p class="small muted">Los PDF irán a <code>Clientes/&lt;cliente&gt;/&lt;finca&gt;/Planes de abonado</code>. Se puede cambiar luego en la pestaña Finca.</p>`,
   { pie: '<button class="btn" data-cerrar>Cancelar</button><button class="btn p" id="nOk">Crear</button>' });
   $$('[data-cerrar]', m).forEach((b) => { b.onclick = cerrarModal; });
+  const pintarFincas = () => {
+    const nom = $('#nCli', m).value.trim();
+    const { cli, fincas } = fincasParaCliente(nom);
+    $('#nFinL', m).innerHTML = fincas.map((f) => `<option value="${esc(f.nombre)}">${esc(f.txt)}</option>`).join('');
+    const info = $('#nFinInfo', m);
+    if (!nom) info.textContent = '';
+    else if (!IX) info.textContent = 'Sin maestros conectados (Ajustes › Maestros).';
+    else if (!cli) info.innerHTML = `<b>${esc(nom)}</b> no está en el maestro de clientes: el plan quedará sin enlazar. Dalo de alta en Asesor o en el maestro.`;
+    else { const n = fincas.filter((f) => f.txt !== 'ya tiene plan').length; info.innerHTML = n ? `Fincas de <b>${esc(cli.nombre)}</b> en el maestro: ${fincas.filter((f) => f.txt !== 'ya tiene plan').map((f) => esc(f.nombre)).join(', ')}.` : `<b>${esc(cli.nombre)}</b> no tiene fincas en el maestro: dalas de alta en Asesor.`; }
+  };
+  $('#nCli', m).addEventListener('input', pintarFincas);
+  $('#nCli', m).addEventListener('change', pintarFincas);
+  pintarFincas();
+  // Por si se acaba de dar de alta algo en Asesor: lee los maestros (como mucho una vez por minuto) y repinta la lista
+  refrescarMaestros({ minMs: 60 * 1000 }).then((cambio) => {
+    if (!cambio || !$('#nCli', m) || !document.body.contains(m)) return;
+    const cl = $('#nCliL', m); if (cl) cl.innerHTML = [...new Set([...db.planes.map((p) => p.cliente), ...mxData.clientes.filter((c) => !/^baja$/i.test(c.estado || '')).map((c) => c.nombre)])].map((c) => `<option value="${esc(c)}">`).join('');
+    pintarFincas();
+  });
   $('#nOk', m).onclick = () => {
     const cliente = $('#nCli', m).value.trim(), finca = $('#nFin', m).value.trim();
     if (!cliente || !finca) { toast('Pon cliente y finca', true); return; }
@@ -1920,7 +1941,7 @@ function renderAjustes(v) {
       const r = await postScript(url, clave, 'leer');
       if (!r.ok) throw new Error(r.error === 'clave' ? 'La clave no coincide con la del script' : (r.error || 'Error del script'));
       mxData = { clientes: r.clientes || [], fincas: r.fincas || [], productos: r.productos || [], fecha: r.fecha };
-      IX = MX.indexar(mxData); await ALM.kvSet('mxData', mxData);
+      IX = MX.indexar(mxData); await ALM.kvSet('mxData', mxData); mxUltima = Date.now();
       commit((d) => { d.config.mx = { url, clave }; });
       toast(`Maestros leídos: ${mxData.clientes.length} clientes y ${mxData.fincas.length} fincas`);
     } catch (e) { toast(e.message || String(e), true); }
@@ -1965,6 +1986,59 @@ async function postScript(url, clave, accion, extra = {}, ms = 45000) {
     throw e;
   } finally { clearTimeout(t); }
 }
+/* Maestros al día (1.9.1): se leen solos al abrir la app, al volver a ella y al recuperar la conexión
+   (como mucho cada 5 min; al abrir «Nuevo plan», cada minuto). Así lo que se da de alta en Asesor
+   (clientes, fincas, cultivos) aparece aquí sin pulsar «Probar y leer». Los planes sin finca enlazada
+   se enlazan solos si ahora encuentran su cliente y finca. */
+let mxUltima = 0, mxLeyendo = null;
+const huellaMx = (m) => (m ? JSON.stringify([m.clientes, m.fincas, m.productos]) : '');
+function refrescarMaestros({ forzar = false, minMs = 5 * 60 * 1000 } = {}) {
+  const c = db && db.config && db.config.mx;
+  if (!c || !c.url || !c.clave || !navigator.onLine) return Promise.resolve(false);
+  if (mxLeyendo) return mxLeyendo;
+  if (!forzar && Date.now() - mxUltima < minMs) return Promise.resolve(false);
+  mxLeyendo = (async () => {
+    try {
+      const r = await postScript(c.url, c.clave, 'leer', {}, 30000);
+      if (!r || !r.ok) return false;
+      mxUltima = Date.now();
+      const nuevo = { clientes: r.clientes || [], fincas: r.fincas || [], productos: r.productos || [], fecha: r.fecha };
+      if (huellaMx(nuevo) === huellaMx(mxData)) return false;
+      mxData = nuevo; IX = MX.indexar(mxData); await ALM.kvSet('mxData', mxData);
+      enlazarSinFinca();
+      repintarSiSeguro();
+      return true;
+    } catch (_) { return false; } finally { mxLeyendo = null; }
+  })();
+  return mxLeyendo;
+}
+/* Enlaza los planes que aún no tienen finca del maestro. Solo guarda si cambia algo. */
+function enlazarSinFinca() {
+  if (!db || conn !== 'listo' || !IX) return 0;
+  const cambia = db.planes.filter((p) => { if (p.mxFin) return false; const x = { ...p }; enlazarPlan(x, false); return x.mxCli !== p.mxCli || x.mxFin !== p.mxFin; });
+  if (!cambia.length) return 0;
+  const ids = new Set(cambia.map((p) => p.id));
+  commit((d) => { for (const p of d.planes) if (ids.has(p.id)) enlazarPlan(p, false); }, { render: false });
+  return cambia.length;
+}
+/* Repinta solo si no hay una ventana abierta ni se está escribiendo en un campo */
+function repintarSiSeguro() {
+  if ($('#modalRoot').innerHTML) return;
+  const a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+  renderAll();
+}
+/* Fincas para el desplegable de «Nuevo plan»: las del cliente en el maestro y las de sus planes */
+function fincasParaCliente(nombreCliente) {
+  const k = CALC.norm(nombreCliente);
+  const cli = IX && nombreCliente ? MX.buscarCliente(IX, nombreCliente) : null;
+  const deMx = cli ? mxData.fincas.filter((f) => f.clienteId === cli.id).map((f) => ({ nombre: f.nombre, txt: [f.cultivos && f.cultivos.length ? f.cultivos.join(', ') : '', f.id].filter(Boolean).join(' · ') })) : [];
+  const dePlanes = db.planes.filter((p) => !k || CALC.norm(p.cliente) === k || (cli && p.mxCli === cli.id)).map((p) => ({ nombre: p.finca, txt: 'ya tiene plan' }));
+  const vistos = new Set(); const out = [];
+  for (const f of [...deMx, ...dePlanes]) { const n = CALC.norm(f.nombre); if (!f.nombre || vistos.has(n)) continue; vistos.add(n); out.push(f); }
+  return { cli, fincas: out.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')) };
+}
+
 /* Busca cliente y finca del maestro por el nombre de las carpetas. Devuelve el texto enlazado o null. */
 function enlazarPlan(p, forzar) {
   if (!IX) return null;
